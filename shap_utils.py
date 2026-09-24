@@ -9,11 +9,21 @@ Module 3 of the dashboard.
 import numpy as np
 import plotly.graph_objects as go
 
+from preprocessing import CATEGORICAL_FEATURES
+
 
 def compute_shap_values(explainer, preprocessor, feature_names, patient_df, predicted_class_index):
     """
     Returns a dict of {feature_name: shap_value} for the predicted class,
     for a single-row patient_df (already in raw/original column form).
+
+    One-hot encoding turns each categorical field into multiple columns
+    (e.g. family_history_cvd_Yes, family_history_cvd_No). SHAP computes a
+    value for every column regardless of whether it's the patient's actual
+    answer, which would otherwise show a category the patient did NOT
+    select (e.g. "_Yes") as a contributing factor for a patient who
+    answered "No". This function keeps only the one-hot column matching
+    what the patient actually selected for each categorical field.
     """
     X_transformed = preprocessor.transform(patient_df)
     if hasattr(X_transformed, "toarray"):
@@ -30,7 +40,23 @@ def compute_shap_values(explainer, preprocessor, feature_names, patient_df, pred
     else:
         class_shap = shap_values[0]
 
-    return dict(zip(feature_names, class_shap))
+    raw_dict = dict(zip(feature_names, class_shap))
+    return _keep_only_active_categories(raw_dict, patient_df)
+
+
+def _keep_only_active_categories(shap_dict: dict, patient_df) -> dict:
+    """Drops one-hot columns for categorical values the patient did NOT select."""
+    patient_row = patient_df.iloc[0]
+    filtered = {}
+    for name, value in shap_dict.items():
+        base = base_feature_name(name)
+        if base in CATEGORICAL_FEATURES:
+            actual_value = str(patient_row[base])
+            expected_name = f"{base}_{actual_value}"
+            if name != expected_name:
+                continue  # this one-hot column is inactive for this patient — skip it
+        filtered[name] = value
+    return filtered
 
 
 def build_shap_bar_chart(shap_dict: dict, top_n: int = 8):

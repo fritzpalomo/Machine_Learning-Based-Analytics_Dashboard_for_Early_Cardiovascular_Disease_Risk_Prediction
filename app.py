@@ -20,8 +20,10 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import db
+from auth import require_login, logout_control
 from preprocessing import ALL_FEATURES
 from shap_utils import compute_shap_values, build_shap_bar_chart, get_dynamic_recommendations
+from validation import validate_patient_input
 
 # ------------------------------------------------------------------
 # Page config
@@ -33,6 +35,7 @@ st.set_page_config(
 )
 
 db.init_db()
+require_login()  # halts here until the user signs in successfully
 
 
 # ------------------------------------------------------------------
@@ -67,6 +70,7 @@ with header_col2:
         f"<div style='text-align:right'>📅 {datetime.date.today().strftime('%B %d, %Y')}</div>",
         unsafe_allow_html=True,
     )
+    logout_control()
 
 if not MODEL_LOADED:
     st.warning(
@@ -129,24 +133,35 @@ if submitted:
     }
     patient_df = pd.DataFrame([patient_dict])[ALL_FEATURES]
 
-    pred_encoded = model_pipeline.predict(patient_df)[0]
-    pred_proba = model_pipeline.predict_proba(patient_df)[0]
-    predicted_class = label_encoder.inverse_transform([pred_encoded])[0]
-    confidence = pred_proba[pred_encoded] * 100
+    errors, warnings = validate_patient_input(patient_dict)
 
-    st.session_state["last_prediction"] = {
-        "patient_dict": patient_dict,
-        "patient_df": patient_df,
-        "predicted_class": predicted_class,
-        "confidence": confidence,
-        "pred_encoded": pred_encoded,
-    }
+    if errors:
+        for msg in errors:
+            st.error(f"⚠️ {msg}")
+        st.session_state.pop("last_prediction", None)
+        st.session_state.pop("last_shap_dict", None)
+    else:
+        for msg in warnings:
+            st.warning(f"⚠️ {msg}")
 
-    db.insert_prediction({
-        **patient_dict,
-        "predicted_risk_category": predicted_class,
-        "confidence_score": round(confidence, 2),
-    })
+        pred_encoded = model_pipeline.predict(patient_df)[0]
+        pred_proba = model_pipeline.predict_proba(patient_df)[0]
+        predicted_class = label_encoder.inverse_transform([pred_encoded])[0]
+        confidence = pred_proba[pred_encoded] * 100
+
+        st.session_state["last_prediction"] = {
+            "patient_dict": patient_dict,
+            "patient_df": patient_df,
+            "predicted_class": predicted_class,
+            "confidence": confidence,
+            "pred_encoded": pred_encoded,
+        }
+
+        db.insert_prediction({
+            **patient_dict,
+            "predicted_risk_category": predicted_class,
+            "confidence_score": round(confidence, 2),
+        })
 
 # ==================== MODULE 2: PREDICTION RESULT ====================
 with col2:
