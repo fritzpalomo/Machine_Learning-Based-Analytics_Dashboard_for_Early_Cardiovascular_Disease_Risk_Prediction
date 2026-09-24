@@ -1,0 +1,5 @@
+venv/
+__pycache__/
+*.pyc
+data/patients.csv
+cvd_dashboard.db
