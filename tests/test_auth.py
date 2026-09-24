@@ -88,3 +88,66 @@ def test_each_user_gets_a_unique_salt(db_module):
     hashes = {r["password_hash"] for r in rows}
     assert len(salts) == 2, "Each user should get an independently random salt"
     assert len(hashes) == 2, "Same password should still produce different hashes due to unique salts"
+
+
+# ------------------------------------------------------------------
+# Logout must clear the WHOLE session, not just the auth flags.
+#
+# Regression test: logging out previously only removed 'authenticated',
+# 'username', and 'role' -- a previous patient's prediction and SHAP
+# data stayed in session_state and would still be visible to the next
+# person who logged into the same browser session. Uses a lightweight
+# streamlit stub so this test doesn't depend on Streamlit's runtime
+# behavior outside a real running app.
+# ------------------------------------------------------------------
+
+class _StopRerun(Exception):
+    pass
+
+
+class _FakeSessionState(dict):
+    def get(self, k, default=None):
+        return dict.get(self, k, default)
+
+
+@pytest.fixture
+def fake_streamlit(monkeypatch):
+    import sys
+    import types
+
+    fake_st = types.ModuleType("streamlit")
+    fake_st.session_state = _FakeSessionState()
+    fake_st.secrets = {}
+    fake_st.caption = lambda *a, **k: None
+    fake_st.button = lambda *a, **k: True  # simulate the Log out button being clicked
+    fake_st.rerun = lambda: (_ for _ in ()).throw(_StopRerun())
+
+    monkeypatch.setitem(sys.modules, "streamlit", fake_st)
+
+    import importlib
+    import auth as auth_mod
+    importlib.reload(auth_mod)  # pick up the fake streamlit module
+    yield auth_mod
+    importlib.reload(auth_mod)  # restore real streamlit for any other test
+
+
+def test_logout_clears_entire_session_including_patient_data(fake_streamlit):
+    auth_mod = fake_streamlit
+    auth_mod.st.session_state.update({
+        "authenticated": True,
+        "username": "admin",
+        "role": "admin",
+        "last_prediction": {"predicted_class": "High Risk", "confidence": 88.2},
+        "last_shap_dict": {"systolic_bp": 0.4, "smoking_status_Current": 0.3},
+    })
+
+    with pytest.raises(_StopRerun):
+        auth_mod.logout_control()
+
+    assert "authenticated" not in auth_mod.st.session_state
+    assert "last_prediction" not in auth_mod.st.session_state, \
+        "Previous patient's prediction must not survive logout"
+    assert "last_shap_dict" not in auth_mod.st.session_state, \
+        "Previous patient's SHAP data must not survive logout"
+    assert len(auth_mod.st.session_state) == 0
+

@@ -77,12 +77,20 @@ def require_login():
     st.stop()  # nothing below this point in app.py renders until logged in
 
 
+def _do_logout():
+    """The actual logout action: wipes the ENTIRE session state, not just
+    the auth flags. This matters clinically -- without this, a previous
+    patient's prediction, SHAP explanation, and recommendations would
+    still be visible to the next person who logs into the same browser
+    session, which is a real data leakage risk between users."""
+    st.session_state.clear()
+    st.rerun()
+
+
 def logout_control():
     """Renders a small 'logged in as ... / Log out' control. Call this
     somewhere visible in the header once the user is authenticated."""
     if st.session_state.get("authenticated"):
         st.caption(f"Logged in as **{st.session_state.get('username')}** ({st.session_state.get('role')})")
         if st.button("Log out", key="logout_button"):
-            for key in ("authenticated", "username", "role"):
-                st.session_state.pop(key, None)
-            st.rerun()
+            _do_logout()
