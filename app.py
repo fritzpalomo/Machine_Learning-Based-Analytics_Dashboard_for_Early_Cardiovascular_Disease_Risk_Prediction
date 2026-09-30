@@ -177,6 +177,9 @@ with col2:
         risk_category = result["predicted_class"]
         confidence = result["confidence"]
 
+        # Color for the "Predicted Risk Category" box is keyed to the risk
+        # category itself (High/Moderate/Low), since that box communicates
+        # the classification, not the confidence.
         risk_colors = {
             "Low Risk": "#16a34a",
             "Moderate Risk": "#f59e0b",
@@ -195,6 +198,17 @@ with col2:
             unsafe_allow_html=True,
         )
 
+        # The gauge's bar color must be keyed to the CONFIDENCE value, not
+        # the risk category — otherwise the bar color and the zone it sits
+        # in disagree (e.g. a "Low Risk" prediction at 41% confidence used
+        # to show a green bar sitting inside the yellow 40-70 zone).
+        if confidence < 40:
+            gauge_color = "#dc2626"  # matches the 0-40 zone
+        elif confidence < 70:
+            gauge_color = "#f59e0b"  # matches the 40-70 zone
+        else:
+            gauge_color = "#16a34a"  # matches the 70-100 zone
+
         gauge_fig = go.Figure(go.Indicator(
             mode="gauge+number",
             value=confidence,
@@ -202,7 +216,7 @@ with col2:
             number={"suffix": "%"},
             gauge={
                 "axis": {"range": [0, 100]},
-                "bar": {"color": color},
+                "bar": {"color": gauge_color},
                 "steps": [
                     {"range": [0, 40], "color": "#fee2e2"},
                     {"range": [40, 70], "color": "#fef3c7"},
