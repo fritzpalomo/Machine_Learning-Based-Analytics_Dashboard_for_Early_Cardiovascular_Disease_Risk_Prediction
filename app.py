@@ -147,7 +147,11 @@ if submitted:
         pred_encoded = model_pipeline.predict(patient_df)[0]
         pred_proba = model_pipeline.predict_proba(patient_df)[0]
         predicted_class = label_encoder.inverse_transform([pred_encoded])[0]
-        confidence = pred_proba[pred_encoded] * 100
+        # float(...) matters here: some models (e.g. XGBoost) return
+        # numpy.float32 probabilities, which sqlite3 silently stores as a
+        # corrupt BLOB instead of a number unless cast to a native float
+        # first (see DF-05 / db._to_native for the storage-side guard).
+        confidence = float(pred_proba[pred_encoded]) * 100
 
         st.session_state["last_prediction"] = {
             "patient_dict": patient_dict,

@@ -140,6 +140,27 @@ def ensure_default_admin(username: str, password: str):
         create_user(username, password, role="admin")
 
 
+def _to_native(value):
+    """Coerces numpy scalar types (e.g. numpy.float32 from XGBoost's
+    predict_proba, as opposed to numpy.float64 which happens to subclass
+    Python's own float) to plain Python int/float/str/None before binding
+    to sqlite3.
+
+    sqlite3 only recognizes int, float, str, bytes, and None natively.
+    numpy.float64 is a subclass of float, so it has always worked by
+    accident -- but numpy.float32 is not, and sqlite3 silently falls back
+    to treating it as a buffer/BLOB instead of raising an error. That
+    corrupted confidence_score as soon as the deployed model (XGBoost)
+    started returning float32 probabilities: values were saved as raw
+    4-byte blobs (e.g. b'\\n\\xd7^B') instead of numbers. See DF-05.
+    """
+    if value is None:
+        return None
+    if hasattr(value, "item"):  # numpy scalar (float32, float64, int64, ...)
+        return value.item()
+    return value
+
+
 def insert_prediction(record: dict):
     with get_connection() as conn:
         conn.execute("""
@@ -151,19 +172,19 @@ def insert_prediction(record: dict):
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             datetime.now().isoformat(),
-            record.get("age"),
+            _to_native(record.get("age")),
             record.get("sex"),
-            record.get("systolic_bp"),
-            record.get("diastolic_bp"),
-            record.get("total_cholesterol"),
-            record.get("fasting_glucose"),
-            record.get("bmi"),
+            _to_native(record.get("systolic_bp")),
+            _to_native(record.get("diastolic_bp")),
+            _to_native(record.get("total_cholesterol")),
+            _to_native(record.get("fasting_glucose")),
+            _to_native(record.get("bmi")),
             record.get("smoking_status"),
             record.get("alcohol_consumption"),
             record.get("physical_activity"),
             record.get("family_history_cvd"),
             record.get("predicted_risk_category"),
-            record.get("confidence_score"),
+            _to_native(record.get("confidence_score")),
         ))
 
 

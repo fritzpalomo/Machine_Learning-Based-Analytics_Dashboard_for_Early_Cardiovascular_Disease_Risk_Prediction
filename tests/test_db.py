@@ -72,3 +72,37 @@ def test_no_pii_columns_exist(db_module):
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(predictions)").fetchall()}
     forbidden = {"full_name", "national_id", "philhealth_no", "address", "contact_number"}
     assert forbidden.isdisjoint(cols)
+
+
+def test_numpy_float32_confidence_is_stored_as_a_real_number(db_module):
+    # Regression test for DF-05: XGBoost's predict_proba() returns
+    # numpy.float32 values. sqlite3 treats numpy.float64 as a plain float
+    # (it subclasses float) but does NOT recognize numpy.float32, and
+    # silently stores it as a raw BLOB instead of raising an error. A
+    # patient's confidence score was corrupted into unreadable bytes
+    # (e.g. b'\n\xd7^B') the moment the deployed model returned float32.
+    np = pytest.importorskip("numpy")
+    record = dict(SAMPLE_RECORD)
+    record["confidence_score"] = np.float32(49.7)
+    db_module.insert_prediction(record)
+    recent = db_module.get_recent_predictions(1)
+    stored_value = recent[0]["confidence_score"]
+    assert isinstance(stored_value, float), (
+        f"Expected a plain float, got {type(stored_value)} ({stored_value!r}) — "
+        "confidence_score was likely stored as a corrupt BLOB."
+    )
+    assert stored_value == pytest.approx(49.7, abs=0.01)
+
+
+def test_numpy_scalar_numeric_fields_are_stored_as_real_numbers(db_module):
+    # Broader regression check: any numpy scalar type (not just float32
+    # confidence scores) passed into a numeric column should be coerced
+    # to a native Python type, not silently stored as a BLOB.
+    np = pytest.importorskip("numpy")
+    record = dict(SAMPLE_RECORD)
+    record["bmi"] = np.float32(27.3)
+    record["age"] = np.int64(54)
+    db_module.insert_prediction(record)
+    recent = db_module.get_recent_predictions(1)
+    assert isinstance(recent[0]["bmi"], float)
+    assert isinstance(recent[0]["age"], int)
