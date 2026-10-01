@@ -17,9 +17,75 @@ so nobody mistakes it for a secure production credential.
 import streamlit as st
 
 import db
+from branding import NAVY as _NAVY, DEEPBLUE as _DEEPBLUE, TEAL as _TEAL, GRADIENT as _GRADIENT
 
 DEV_DEFAULT_USERNAME = "admin"
 DEV_DEFAULT_PASSWORD = "changeme123"  # DEV ONLY — overridden by st.secrets in real deployments
+
+_LOGIN_CSS = f"""
+<style>
+.login-hero {{
+    text-align: center;
+    padding: 40px 20px 28px 20px;
+    background: {_GRADIENT};
+    border-radius: 16px;
+    margin-bottom: 26px;
+    color: #ffffff;
+}}
+.login-hero-icon {{ font-size: 42px; margin-bottom: 8px; line-height: 1; }}
+.login-hero-title {{ font-size: 24px; font-weight: 700; letter-spacing: 0.2px; }}
+.login-hero-subtitle {{ font-size: 14px; opacity: 0.85; margin-top: 6px; }}
+
+/* Rhythmic double-beat pulse ("lub-dub"), like a real heartbeat, applied
+   to the heart icon instead of a static glyph. */
+@keyframes heartbeat {{
+    0%   {{ transform: scale(1); }}
+    14%  {{ transform: scale(1.3); }}
+    28%  {{ transform: scale(1); }}
+    42%  {{ transform: scale(1.3); }}
+    70%  {{ transform: scale(1); }}
+    100% {{ transform: scale(1); }}
+}}
+.heartbeat-icon {{
+    display: inline-block;
+    animation: heartbeat 1.4s ease-in-out infinite;
+}}
+
+/* The login card uses a real Streamlit container (st.container(key=...))
+   styled via its `key` -> CSS class, NOT a raw HTML <div> split across
+   multiple st.markdown() calls. Each st.markdown/st.form/st.warning call
+   renders as its own independent sibling in the DOM -- an opening <div>
+   in one call and a closing </div> in a later call do NOT actually wrap
+   the Streamlit widgets rendered in between; the browser just shows an
+   empty box with the real content left sitting outside it. Targeting a
+   real container's key avoids that bug entirely. */
+.st-key-login_card {{
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 14px;
+    padding: 24px 28px 10px 28px;
+    box-shadow: 0 6px 20px rgba(33, 41, 92, 0.10);
+}}
+.st-key-login_card h3 {{ color: {_NAVY}; margin-bottom: 0; }}
+.login-footer {{ font-size: 11px; color: #9ca3af; text-align: center; margin-top: 4px; }}
+
+div[data-testid="stForm"] button {{
+    background-color: {_NAVY};
+    color: #ffffff !important;
+    border-radius: 8px;
+    border: none;
+    font-weight: 600;
+    transition: background-color 0.15s ease-in-out;
+}}
+div[data-testid="stForm"] button:hover {{
+    background-color: {_DEEPBLUE};
+    color: #ffffff !important;
+}}
+div[data-testid="stForm"] input {{
+    border-radius: 8px;
+}}
+</style>
+"""
 
 
 def _get_secret(key, default=None):
@@ -47,32 +113,54 @@ def require_login():
     if st.session_state.get("authenticated"):
         return  # already logged in this session
 
-    st.markdown("## 🔒 Explainable ML Analytics Dashboard")
-    st.caption("Please sign in to continue.")
+    st.markdown(_LOGIN_CSS, unsafe_allow_html=True)
 
-    if using_dev_default:
-        st.warning(
-            f"No `ADMIN_PASSWORD` secret configured — using a development-only "
-            f"default login (username: `{admin_username}`, password: `{DEV_DEFAULT_PASSWORD}`). "
-            f"Set `ADMIN_USERNAME` and `ADMIN_PASSWORD` in Streamlit secrets before "
-            f"any real deployment.",
-            icon="⚠️",
-        )
+    st.markdown(
+        """
+        <div class="login-hero">
+            <div class="login-hero-icon heartbeat-icon">🫀</div>
+            <div class="login-hero-title">Explainable ML Analytics Dashboard</div>
+            <div class="login-hero-subtitle">WHO/PhilPEN Cardiovascular Risk Classification</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    with st.form("login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Log In")
+    left_gutter, center, right_gutter = st.columns([1, 1.3, 1])
+    with center:
+        with st.container(key="login_card"):
+            st.markdown("### 🔒 Sign In")
+            st.caption("Please sign in to continue.")
 
-    if submitted:
-        role = db.verify_user(username, password)
-        if role:
-            st.session_state["authenticated"] = True
-            st.session_state["username"] = username
-            st.session_state["role"] = role
-            st.rerun()
-        else:
-            st.error("Invalid username or password.")
+            if using_dev_default:
+                st.warning(
+                    f"No `ADMIN_PASSWORD` secret configured — using a development-only "
+                    f"default login (username: `{admin_username}`, password: `{DEV_DEFAULT_PASSWORD}`). "
+                    f"Set `ADMIN_USERNAME` and `ADMIN_PASSWORD` in Streamlit secrets before "
+                    f"any real deployment.",
+                    icon="⚠️",
+                )
+
+            with st.form("login_form"):
+                username = st.text_input("👤 Username", placeholder="Enter your username")
+                password = st.text_input("🔑 Password", type="password", placeholder="Enter your password")
+                submitted = st.form_submit_button("Log In", use_container_width=True)
+
+            if submitted:
+                role = db.verify_user(username, password)
+                if role:
+                    st.session_state["authenticated"] = True
+                    st.session_state["username"] = username
+                    st.session_state["role"] = role
+                    st.rerun()
+                else:
+                    st.error("Invalid username or password.")
+
+            st.markdown(
+                '<div class="login-footer">Patient data is stored without any personally '
+                'identifying information.</div>',
+                unsafe_allow_html=True,
+            )
 
     st.stop()  # nothing below this point in app.py renders until logged in
 
