@@ -20,7 +20,16 @@ import os
 from datetime import datetime
 from contextlib import contextmanager
 
-DB_PATH = "cvd_dashboard.db"
+# Resolved relative to THIS file's own location, not the process's current
+# working directory. A bare relative path ("cvd_dashboard.db") would instead
+# resolve against wherever `streamlit run app.py` happened to be launched
+# from -- if that ever differs from this project folder (a different
+# terminal cwd, an IDE's default run folder, a second project copy), Python
+# silently creates/writes to a SEPARATE database file there, with no error.
+# Predictions still "work" on screen; they just stop appearing in the
+# database you're looking at. Anchoring to __file__ makes this path stable
+# no matter where the app is launched from.
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cvd_dashboard.db")
 
 PBKDF2_ITERATIONS = 200_000
 

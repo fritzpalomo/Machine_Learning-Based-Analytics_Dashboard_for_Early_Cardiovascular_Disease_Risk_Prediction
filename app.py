@@ -22,6 +22,7 @@ import streamlit as st
 import db
 from auth import require_login, logout_control
 from preprocessing import ALL_FEATURES
+from referral import check_referral_criteria
 from shap_utils import compute_shap_values, build_shap_bar_chart, get_dynamic_recommendations
 from validation import validate_patient_input
 
@@ -140,9 +141,12 @@ if submitted:
             st.error(f"⚠️ {msg}")
         st.session_state.pop("last_prediction", None)
         st.session_state.pop("last_shap_dict", None)
+        st.session_state.pop("last_referral_reasons", None)
     else:
         for msg in warnings:
             st.warning(f"⚠️ {msg}")
+
+        st.session_state["last_referral_reasons"] = check_referral_criteria(patient_dict)
 
         pred_encoded = model_pipeline.predict(patient_df)[0]
         pred_proba = model_pipeline.predict_proba(patient_df)[0]
@@ -153,11 +157,27 @@ if submitted:
         # first (see DF-05 / db._to_native for the storage-side guard).
         confidence = float(pred_proba[pred_encoded]) * 100
 
+        # A numeric "risk score" (0-100) derived from the model's full
+        # probability distribution across the three categories, using
+        # severity weights (Low=0, Moderate=50, High=100). This is a
+        # DIFFERENT number from "confidence": confidence says how sure the
+        # model is in whichever category it picked; risk_score says how far
+        # along the low-to-high risk spectrum the model's overall belief
+        # sits. It is also NOT the same as the WHO/PhilPEN 10-year CVD
+        # event probability -- the model classifies into 3 categories, it
+        # does not estimate a continuous clinical event probability.
+        RISK_SEVERITY_WEIGHTS = {"Low Risk": 0, "Moderate Risk": 50, "High Risk": 100}
+        risk_score = float(sum(
+            prob * RISK_SEVERITY_WEIGHTS.get(cls, 50)
+            for cls, prob in zip(label_encoder.classes_, pred_proba)
+        ))
+
         st.session_state["last_prediction"] = {
             "patient_dict": patient_dict,
             "patient_df": patient_df,
             "predicted_class": predicted_class,
             "confidence": confidence,
+            "risk_score": risk_score,
             "pred_encoded": pred_encoded,
         }
 
@@ -176,6 +196,7 @@ with col2:
         result = st.session_state["last_prediction"]
         risk_category = result["predicted_class"]
         confidence = result["confidence"]
+        risk_score = result["risk_score"]
 
         # Color for the "Predicted Risk Category" box is keyed to the risk
         # category itself (High/Moderate/Low), since that box communicates
@@ -198,14 +219,42 @@ with col2:
             unsafe_allow_html=True,
         )
 
+        # Composite Risk Score — a numeric, WHO-style-banded representation
+        # of risk LEVEL (not confidence). Low/Moderate/High bands use equal
+        # thirds of the 0-100 scale since risk_score is a model-derived
+        # weighted index, not the WHO/PhilPEN clinical event-probability
+        # scale, so WHO's exact cut-points (10%, 30%, 40%) don't apply here.
+        if risk_score < 33:
+            risk_score_color = "#16a34a"
+        elif risk_score < 67:
+            risk_score_color = "#f59e0b"
+        else:
+            risk_score_color = "#dc2626"
+
+        st.markdown(
+            f"""
+            <div style='background-color:{risk_score_color}20; border:2px solid {risk_score_color};
+                        border-radius:10px; padding:12px; text-align:center; margin-bottom:16px;'>
+                <div style='font-size:13px; color:#555;'>Composite Risk Score</div>
+                <div style='font-size:24px; font-weight:700; color:{risk_score_color};'>{risk_score:.1f} / 100</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "A numeric risk-level indicator (0 = fully Low Risk, 100 = fully High Risk), "
+            "computed from the model's probability across all three categories. This is a "
+            "model-derived index, not the WHO/PhilPEN 10-year cardiovascular event probability."
+        )
+
         # The gauge's bar color must be keyed to the CONFIDENCE value, not
         # the risk category — otherwise the bar color and the zone it sits
-        # in disagree (e.g. a "Low Risk" prediction at 41% confidence used
-        # to show a green bar sitting inside the yellow 40-70 zone).
-        if confidence < 40:
-            gauge_color = "#dc2626"  # matches the 0-40 zone
+        # in disagree. Zone boundary set at 50 (rather than 40) for a
+        # visually cleaner gauge.
+        if confidence < 50:
+            gauge_color = "#dc2626"  # matches the 0-50 zone
         elif confidence < 70:
-            gauge_color = "#f59e0b"  # matches the 40-70 zone
+            gauge_color = "#f59e0b"  # matches the 50-70 zone
         else:
             gauge_color = "#16a34a"  # matches the 70-100 zone
 
@@ -218,14 +267,25 @@ with col2:
                 "axis": {"range": [0, 100]},
                 "bar": {"color": gauge_color},
                 "steps": [
-                    {"range": [0, 40], "color": "#fee2e2"},
-                    {"range": [40, 70], "color": "#fef3c7"},
+                    {"range": [0, 50], "color": "#fee2e2"},
+                    {"range": [50, 70], "color": "#fef3c7"},
                     {"range": [70, 100], "color": "#dcfce7"},
                 ],
             },
         ))
         gauge_fig.update_layout(height=250, margin=dict(l=10, r=10, t=40, b=10))
         st.plotly_chart(gauge_fig, use_container_width=True)
+
+        with st.expander("ℹ️ What does the Model Confidence Score mean?"):
+            st.write(
+                "This gauge shows how certain the model is in the risk category it just "
+                "predicted — it does **not** represent the patient's probability of a "
+                "cardiovascular event. A model can be highly confident in any outcome, "
+                "including a Low Risk classification; a low score here means the model's "
+                "probabilities were split closely between categories, not that the patient "
+                "is necessarily at lower risk. For a numeric indicator of risk level itself, "
+                "see the Composite Risk Score above."
+            )
 
         st.info("This classification is generated by the machine learning model trained using WHO/PhilPEN cardiovascular risk categories.", icon="ℹ️")
     else:
@@ -258,6 +318,30 @@ st.divider()
 # ==================== MODULE 4: RECOMMENDATIONS ====================
 st.markdown("### 4️⃣ Recommendations")
 
+referral_reasons = st.session_state.get("last_referral_reasons")
+if referral_reasons:
+    reasons_html = "".join(f"<li>{reason}</li>" for reason in referral_reasons)
+    st.markdown(
+        f"""
+        <div style='background-color:#fee2e2; border:2px solid #dc2626; border-radius:10px;
+                    padding:14px 18px; margin-bottom:16px;'>
+            <div style='font-weight:700; color:#991b1b; font-size:16px;'>
+                ⚠️ Refer to a Higher-Level Facility
+            </div>
+            <ul style='margin:8px 0 2px 18px; color:#7f1d1d; font-size:13px;'>
+                {reasons_html}
+            </ul>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Based on a subset of PhilPEN primary-care referral criteria checkable from this "
+        "app's current inputs. This is not exhaustive — criteria requiring data this app "
+        "does not collect (e.g. personal history of CVD/stroke/kidney disease, proteinuria, "
+        "medication response, foot ulcers) must still be assessed clinically."
+    )
+
 if "last_shap_dict" in st.session_state:
     st.caption("Personalized guidance based on the factors increasing this patient's risk.")
     edu_items = get_dynamic_recommendations(st.session_state["last_shap_dict"], top_n=4)
@@ -281,3 +365,21 @@ for edu_col, rec in zip(edu_cols, edu_items):
         )
 
 st.caption("ℹ️ This information is for educational purposes only and does not replace professional medical advice, diagnosis, or treatment.")
+
+st.divider()
+
+# ==================== PREDICTION HISTORY (DATABASE VIEW) ====================
+with st.expander("📊 View Prediction History (every interaction saved to the database)"):
+    history_rows = db.get_recent_predictions(limit=200)
+    if history_rows:
+        history_df = pd.DataFrame(history_rows)
+        st.caption(f"Showing the {len(history_df)} most recent saved prediction(s), newest first.")
+        st.dataframe(history_df, use_container_width=True, hide_index=True)
+        st.download_button(
+            "⬇️ Download as CSV",
+            data=history_df.to_csv(index=False).encode("utf-8"),
+            file_name="prediction_history.csv",
+            mime="text/csv",
+        )
+    else:
+        st.caption("No predictions have been saved yet. Run a prediction above to see it appear here.")
