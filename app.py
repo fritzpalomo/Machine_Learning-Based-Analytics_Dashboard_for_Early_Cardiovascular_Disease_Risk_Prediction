@@ -132,11 +132,9 @@ with st.container(key="dashboard_header"):
 st.markdown(
     f"""
     <style>
-    .stApp {{ background-color: #f8fafc; }}
     div[data-testid="stVerticalBlockBorderWrapper"] {{
         border-radius: 14px !important;
-        box-shadow: 0 2px 12px rgba(33, 41, 92, 0.07);
-        background-color: #ffffff;
+        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
     }}
     .module-badge {{
         display: inline-flex; align-items: center; justify-content: center;
@@ -144,16 +142,16 @@ st.markdown(
         background: {GRADIENT}; color: #ffffff; font-weight: 700; font-size: 13px;
         margin-right: 8px; vertical-align: middle;
     }}
-    .module-heading {{ font-size: 18px; font-weight: 700; color: #1f2937; vertical-align: middle; }}
+    .module-heading {{ font-size: 18px; font-weight: 700; color: inherit; vertical-align: middle; }}
     .rec-tile {{
-        border: 1px solid #e5e7eb; border-radius: 12px; padding: 14px;
+        border: 1px solid rgba(128,128,128,0.35); border-radius: 12px; padding: 14px;
         min-height: 170px; box-shadow: 0 2px 10px rgba(0,0,0,0.05);
-        background-color: #ffffff;
+        background-color: rgba(128,128,128,0.08);
     }}
     .rec-icon-badge {{
         display: inline-flex; align-items: center; justify-content: center;
         width: 36px; height: 36px; border-radius: 10px;
-        background-color: #eef2ff; font-size: 18px; margin-bottom: 6px;
+        background-color: rgba(99,102,241,0.2); font-size: 18px; margin-bottom: 6px;
     }}
     </style>
     """,
@@ -315,7 +313,7 @@ with col2:
                 <div style='background-color:{color}20; border:2px solid {color};
                             border-radius:10px; padding:16px; text-align:center; margin-bottom:16px;
                             box-shadow:0 2px 10px rgba(0,0,0,0.05);'>
-                    <div style='font-size:14px; color:#555;'>Predicted Risk Category</div>
+                    <div style='font-size:14px; opacity:0.75;'>Predicted Risk Category</div>
                     <div style='font-size:28px; font-weight:700; color:{color};'>{risk_category.upper()}</div>
                 </div>
                 """,
@@ -344,9 +342,9 @@ with col2:
                     "axis": {"range": [0, 100]},
                     "bar": {"color": risk_gauge_color},
                     "steps": [
-                        {"range": [0, 33], "color": "#dcfce7"},
-                        {"range": [33, 67], "color": "#fef3c7"},
-                        {"range": [67, 100], "color": "#fee2e2"},
+                        {"range": [0, 33], "color": "rgba(22,163,74,0.28)"},
+                        {"range": [33, 67], "color": "rgba(245,158,11,0.28)"},
+                        {"range": [67, 100], "color": "rgba(220,38,38,0.28)"},
                     ],
                 },
             ))
@@ -365,10 +363,10 @@ with col2:
             # stat box keeps it visually distinct from "risk level."
             st.markdown(
                 f"""
-                <div style='background-color:#f3f4f6; border:2px solid #9ca3af;
+                <div style='background-color:rgba(128,128,128,0.12); border:2px solid rgba(128,128,128,0.5);
                             border-radius:10px; padding:12px; text-align:center; margin-bottom:8px;'>
-                    <div style='font-size:13px; color:#555;'>Model Confidence Score</div>
-                    <div style='font-size:28px; font-weight:700; color:#374151;'>{confidence:.1f}%</div>
+                    <div style='font-size:13px; opacity:0.75;'>Model Confidence Score</div>
+                    <div style='font-size:28px; font-weight:700;'>{confidence:.1f}%</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -458,7 +456,7 @@ with st.container(border=True):
                 <div class="rec-tile">
                     <div class="rec-icon-badge">{rec['icon']}</div>
                     <div style='font-weight:600; margin-top:4px;'>{rec['title']}</div>
-                    <div style='font-size:12px; color:#666; margin-top:4px;'>{rec['desc']}</div>
+                    <div style='font-size:12px; opacity:0.75; margin-top:4px;'>{rec['desc']}</div>
                 </div>
                 """,
                 unsafe_allow_html=True,

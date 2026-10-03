@@ -24,16 +24,27 @@ DEV_DEFAULT_PASSWORD = "changeme123"  # DEV ONLY — overridden by st.secrets in
 
 _LOGIN_CSS = f"""
 <style>
-.login-hero {{
-    text-align: center;
-    padding: 40px 20px 28px 20px;
-    background: {_GRADIENT};
-    border-radius: 16px;
-    margin-bottom: 26px;
-    color: #ffffff;
+/* Login-screen look: a frosted-glass card (glassmorphism) over a full-page
+   navy-to-teal gradient, pill-shaped inputs, and a soft pulsing teal glow.
+   This CSS is only injected on the login screen (require_login stops before
+   the dashboard renders), so none of it leaks into the dashboard itself. */
+.stApp {{
+    background:
+        radial-gradient(circle at 12% 18%, rgba(34, 211, 238, 0.28) 0%, transparent 38%),
+        radial-gradient(circle at 88% 82%, rgba(56, 189, 248, 0.22) 0%, transparent 42%),
+        {_GRADIENT};
+    background-attachment: fixed;
 }}
-.login-hero-icon {{ font-size: 42px; margin-bottom: 8px; line-height: 1; }}
-.login-hero-title {{ font-size: 24px; font-weight: 700; letter-spacing: 0.2px; }}
+header[data-testid="stHeader"],
+[data-testid="stAppViewContainer"] {{ background: transparent !important; }}
+.block-container {{ padding-top: 7vh !important; }}
+
+.login-hero {{ text-align: center; margin-bottom: 22px; color: #ffffff; }}
+.login-hero-icon {{ font-size: 46px; margin-bottom: 8px; line-height: 1; }}
+.login-hero-title {{
+    font-size: 26px; font-weight: 700; letter-spacing: 0.3px;
+    text-shadow: 0 2px 14px rgba(0, 0, 0, 0.25);
+}}
 .login-hero-subtitle {{ font-size: 14px; opacity: 0.85; margin-top: 6px; }}
 
 /* Rhythmic double-beat pulse ("lub-dub"), like a real heartbeat, applied
@@ -51,38 +62,106 @@ _LOGIN_CSS = f"""
     animation: heartbeat 1.4s ease-in-out infinite;
 }}
 
-/* The login card uses a real Streamlit container (st.container(key=...))
-   styled via its `key` -> CSS class, NOT a raw HTML <div> split across
-   multiple st.markdown() calls. Each st.markdown/st.form/st.warning call
-   renders as its own independent sibling in the DOM -- an opening <div>
-   in one call and a closing </div> in a later call do NOT actually wrap
-   the Streamlit widgets rendered in between; the browser just shows an
-   empty box with the real content left sitting outside it. Targeting a
-   real container's key avoids that bug entirely. */
-.st-key-login_card {{
-    background: #ffffff;
-    border: 1px solid #e5e7eb;
-    border-radius: 14px;
-    padding: 24px 28px 10px 28px;
-    box-shadow: 0 6px 20px rgba(33, 41, 92, 0.10);
+/* Soft breathing glow around the card. */
+@keyframes glowPulse {{
+    0%, 100% {{
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25),
+                    0 0 18px rgba(34, 211, 238, 0.25),
+                    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+    }}
+    50% {{
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25),
+                    0 0 38px rgba(34, 211, 238, 0.55),
+                    inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+    }}
 }}
-.st-key-login_card h3 {{ color: {_NAVY}; margin-bottom: 0; }}
-.login-footer {{ font-size: 11px; color: #9ca3af; text-align: center; margin-top: 4px; }}
 
-div[data-testid="stForm"] button {{
-    background-color: {_NAVY};
-    color: #ffffff !important;
-    border-radius: 8px;
-    border: none;
-    font-weight: 600;
-    transition: background-color 0.15s ease-in-out;
+/* The card is a real Streamlit container (st.container(key=...)) styled via
+   its `key` -> CSS class, NOT a raw HTML <div> split across several
+   st.markdown() calls (that renders as an empty box, since each Streamlit
+   call is its own sibling element in the DOM). */
+.st-key-login_card {{
+    background: rgba(255, 255, 255, 0.12);
+    -webkit-backdrop-filter: blur(18px);
+    backdrop-filter: blur(18px);
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    border-radius: 24px;
+    padding: 28px 30px 14px 30px;
+    animation: glowPulse 3.2s ease-in-out infinite;
 }}
-div[data-testid="stForm"] button:hover {{
-    background-color: {_DEEPBLUE};
-    color: #ffffff !important;
+.st-key-login_card h3 {{ color: #ffffff !important; text-align: center; margin-bottom: 0; }}
+.st-key-login_card [data-testid="stCaptionContainer"] {{ text-align: center; }}
+.st-key-login_card [data-testid="stCaptionContainer"] p,
+.st-key-login_card small {{ color: rgba(255, 255, 255, 0.8) !important; }}
+.st-key-login_card [data-testid="stWidgetLabel"] p {{ color: #ffffff !important; font-weight: 500; }}
+
+/* Drop Streamlit's own form border so it's one card, not a box in a box. */
+.st-key-login_card [data-testid="stForm"] {{
+    border: none !important;
+    padding: 0 !important;
+    background: transparent !important;
 }}
-div[data-testid="stForm"] input {{
-    border-radius: 8px;
+
+/* Pill-shaped inputs. */
+.st-key-login_card div[data-baseweb="input"] {{
+    border-radius: 999px !important;
+    border: 1px solid rgba(255, 255, 255, 0.6) !important;
+    background: rgba(255, 255, 255, 0.08) !important;
+    overflow: hidden;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}}
+.st-key-login_card div[data-baseweb="input"]:focus-within {{
+    border-color: #22d3ee !important;
+    box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.25);
+}}
+.st-key-login_card div[data-baseweb="base-input"] {{ background: transparent !important; }}
+.st-key-login_card input {{
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+    padding-left: 18px !important;
+}}
+.st-key-login_card input::placeholder {{
+    color: rgba(255, 255, 255, 0.6) !important;
+    -webkit-text-fill-color: rgba(255, 255, 255, 0.6) !important;
+}}
+/* Browser autofill would otherwise paint a pale background over the glass. */
+.st-key-login_card input:-webkit-autofill {{
+    -webkit-box-shadow: 0 0 0 1000px rgba(12, 60, 100, 0.95) inset !important;
+    -webkit-text-fill-color: #ffffff !important;
+}}
+/* Show/hide-password eye icon. */
+.st-key-login_card div[data-baseweb="input"] button {{ background: transparent !important; }}
+.st-key-login_card div[data-baseweb="input"] svg {{
+    fill: rgba(255, 255, 255, 0.85) !important;
+    color: rgba(255, 255, 255, 0.85) !important;
+}}
+
+/* Sign-in button: cyan pill, dark text, glows on hover. */
+.st-key-login_card [data-testid="stFormSubmitButton"] button,
+.st-key-login_card button[kind="secondaryFormSubmit"],
+.st-key-login_card button[kind="primaryFormSubmit"] {{
+    background: linear-gradient(90deg, #22d3ee, #38bdf8) !important;
+    border: none !important;
+    border-radius: 999px !important;
+    height: 46px;
+    transition: box-shadow 0.15s ease, transform 0.15s ease;
+}}
+.st-key-login_card [data-testid="stFormSubmitButton"] button p {{
+    color: #0b1b3a !important;
+    font-weight: 700;
+}}
+.st-key-login_card [data-testid="stFormSubmitButton"] button:hover,
+.st-key-login_card button[kind="secondaryFormSubmit"]:hover,
+.st-key-login_card button[kind="primaryFormSubmit"]:hover {{
+    box-shadow: 0 0 22px rgba(34, 211, 238, 0.6);
+    transform: translateY(-1px);
+}}
+
+.login-footer {{
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.7);
+    text-align: center;
+    margin-top: 6px;
 }}
 </style>
 """
