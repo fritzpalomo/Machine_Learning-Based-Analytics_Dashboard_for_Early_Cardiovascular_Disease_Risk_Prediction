@@ -171,6 +171,99 @@ def module_badge(number: int, title: str) -> str:
     )
 
 
+# ------------------------------------------------------------------
+# Sidebar navigation — two pages: "Dashboard" (the 4 modules) and
+# "Reports" (prediction history from the database). Same navy gradient
+# as the login screen and header, with a pill-style active item.
+# ------------------------------------------------------------------
+st.markdown(
+    f"""
+    <style>
+    section[data-testid="stSidebar"] {{ background: linear-gradient(180deg, #21295C 0%, #0b1b3a 100%); }}
+    section[data-testid="stSidebar"] * {{ color: #ffffff; }}
+    .nav-brand {{ font-size: 18px; font-weight: 700; margin: 4px 0 2px 0; }}
+    .nav-sub {{ font-size: 12px; opacity: 0.7; margin-bottom: 18px; }}
+    section[data-testid="stSidebar"] div[role="radiogroup"] {{ gap: 6px; }}
+    section[data-testid="stSidebar"] div[role="radiogroup"] label {{
+        padding: 10px 14px; border-radius: 12px; width: 100%; cursor: pointer;
+        transition: background 0.15s ease;
+    }}
+    section[data-testid="stSidebar"] div[role="radiogroup"] label:hover {{ background: rgba(255,255,255,0.1); }}
+    section[data-testid="stSidebar"] div[role="radiogroup"] label > div:first-child {{ display: none; }}
+    section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) {{
+        background: linear-gradient(90deg, #22d3ee, #38bdf8);
+    }}
+    section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) * {{
+        color: #0b1b3a !important; font-weight: 700;
+    }}
+    .stat-card {{
+        border: 1px solid rgba(128,128,128,0.35); border-radius: 14px; padding: 14px 16px;
+        background-color: rgba(128,128,128,0.08); box-shadow: 0 2px 12px rgba(0,0,0,0.12);
+    }}
+    .stat-label {{ font-size: 12px; opacity: 0.75; }}
+    .stat-value {{ font-size: 26px; font-weight: 700; }}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+with st.sidebar:
+    st.markdown(
+        '<div class="nav-brand"><span class="heartbeat-icon">🫀</span> CVD Risk</div>'
+        '<div class="nav-sub">Explainable ML Dashboard</div>',
+        unsafe_allow_html=True,
+    )
+    page = st.radio(
+        "Navigation",
+        ["🏠  Dashboard", "📑  Reports"],
+        key="nav_page",
+        label_visibility="collapsed",
+    )
+    st.caption(f"Signed in as {st.session_state.get('username')} ({st.session_state.get('role')})")
+
+if page.endswith("Reports"):
+    st.markdown(module_badge("📑", "Reports — Prediction History"), unsafe_allow_html=True)
+    st.caption("Every prediction saved to the database, newest first. No personally identifying information is stored.")
+    history_rows = db.get_recent_predictions(limit=1000)
+    if not history_rows:
+        st.info("No predictions have been saved yet. Run a prediction on the Dashboard page and it will appear here.")
+        st.stop()
+
+    history_df = pd.DataFrame(history_rows)
+    total = len(history_df)
+    counts = history_df["predicted_risk_category"].value_counts()
+    avg_conf = pd.to_numeric(history_df["confidence_score"], errors="coerce").mean()
+
+    stat_cols = st.columns(5)
+    stats = [
+        ("Total predictions", f"{total}"),
+        ("Low Risk", f"{int(counts.get('Low Risk', 0))}"),
+        ("Moderate Risk", f"{int(counts.get('Moderate Risk', 0))}"),
+        ("High Risk", f"{int(counts.get('High Risk', 0))}"),
+        ("Avg. confidence", f"{avg_conf:.1f}%" if pd.notna(avg_conf) else "—"),
+    ]
+    for col, (label, value) in zip(stat_cols, stats):
+        col.markdown(
+            f'<div class="stat-card"><div class="stat-label">{label}</div>'
+            f'<div class="stat-value">{value}</div></div>',
+            unsafe_allow_html=True,
+        )
+
+    st.write("")
+    with st.container(border=True):
+        categories = sorted(history_df["predicted_risk_category"].dropna().unique())
+        selected = st.multiselect("Filter by risk category", categories, default=categories)
+        filtered = history_df[history_df["predicted_risk_category"].isin(selected)]
+        st.caption(f"Showing {len(filtered)} of {total} record(s).")
+        st.dataframe(filtered, use_container_width=True, hide_index=True)
+        st.download_button(
+            "⬇️ Download as CSV",
+            data=filtered.to_csv(index=False).encode("utf-8"),
+            file_name="prediction_history.csv",
+            mime="text/csv",
+        )
+    st.stop()  # Reports page ends here; the Dashboard modules below don't render.
+
+
 if not MODEL_LOADED:
     st.warning(
         "No trained model found. Run `python generate_synthetic_data.py` "
@@ -463,21 +556,3 @@ with st.container(border=True):
             )
 
     st.caption("ℹ️ This information is for educational purposes only and does not replace professional medical advice, diagnosis, or treatment.")
-
-st.divider()
-
-# ==================== PREDICTION HISTORY (DATABASE VIEW) ====================
-with st.expander("📊 View Prediction History (every interaction saved to the database)"):
-    history_rows = db.get_recent_predictions(limit=200)
-    if history_rows:
-        history_df = pd.DataFrame(history_rows)
-        st.caption(f"Showing the {len(history_df)} most recent saved prediction(s), newest first.")
-        st.dataframe(history_df, use_container_width=True, hide_index=True)
-        st.download_button(
-            "⬇️ Download as CSV",
-            data=history_df.to_csv(index=False).encode("utf-8"),
-            file_name="prediction_history.csv",
-            mime="text/csv",
-        )
-    else:
-        st.caption("No predictions have been saved yet. Run a prediction above to see it appear here.")

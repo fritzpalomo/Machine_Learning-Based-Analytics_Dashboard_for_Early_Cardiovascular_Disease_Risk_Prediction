@@ -106,34 +106,55 @@ header[data-testid="stHeader"],
 .st-key-login_card div[data-baseweb="input"] {{
     border-radius: 999px !important;
     border: 1px solid rgba(255, 255, 255, 0.6) !important;
-    background: rgba(255, 255, 255, 0.08) !important;
+    background: #ffffff !important;
+    background-color: #ffffff !important;
     overflow: hidden;
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }}
 .st-key-login_card div[data-baseweb="input"]:focus-within {{
+    background: #ffffff !important;
     border-color: #22d3ee !important;
     box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.25);
 }}
-.st-key-login_card div[data-baseweb="base-input"] {{ background: transparent !important; }}
+/* Streamlit paints its own light fill on the wrapper layers AND the <input>
+   itself; clear every layer so the dark glass fill above shows through and
+   the white text stays readable. */
+.st-key-login_card [data-testid="stTextInputRootElement"],
+.st-key-login_card [data-baseweb="input"],
+.st-key-login_card [data-baseweb="base-input"],
+.st-key-login_card div[data-baseweb="input"] > div {{
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+}}
+.st-key-login_card [data-testid="stTextInputRootElement"] {{
+    border-radius: 999px !important;
+    border: 1px solid rgba(255, 255, 255, 0.9) !important;
+    overflow: hidden;
+}}
 .st-key-login_card input {{
-    color: #ffffff !important;
-    -webkit-text-fill-color: #ffffff !important;
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+    caret-color: #065A82;
+    color: #0b1b3a !important;
+    -webkit-text-fill-color: #0b1b3a !important;
+    font-weight: 500;
+    opacity: 1 !important;
     padding-left: 18px !important;
 }}
 .st-key-login_card input::placeholder {{
-    color: rgba(255, 255, 255, 0.6) !important;
-    -webkit-text-fill-color: rgba(255, 255, 255, 0.6) !important;
+    color: rgba(11, 27, 58, 0.5) !important;
+    -webkit-text-fill-color: rgba(11, 27, 58, 0.5) !important;
 }}
 /* Browser autofill would otherwise paint a pale background over the glass. */
 .st-key-login_card input:-webkit-autofill {{
-    -webkit-box-shadow: 0 0 0 1000px rgba(12, 60, 100, 0.95) inset !important;
-    -webkit-text-fill-color: #ffffff !important;
+    -webkit-box-shadow: 0 0 0 1000px #ffffff inset !important;
+    -webkit-text-fill-color: #0b1b3a !important;
 }}
 /* Show/hide-password eye icon. */
 .st-key-login_card div[data-baseweb="input"] button {{ background: transparent !important; }}
 .st-key-login_card div[data-baseweb="input"] svg {{
-    fill: rgba(255, 255, 255, 0.85) !important;
-    color: rgba(255, 255, 255, 0.85) !important;
+    fill: #065A82 !important;
+    color: #065A82 !important;
 }}
 
 /* Sign-in button: cyan pill, dark text, glows on hover. */
@@ -156,6 +177,25 @@ header[data-testid="stHeader"],
     box-shadow: 0 0 22px rgba(34, 211, 238, 0.6);
     transform: translateY(-1px);
 }}
+
+/* Dev-default warning: dark glass panel with light text (the stock amber
+   text is unreadable on the teal background). */
+.st-key-login_card [data-testid="stAlert"],
+.st-key-login_card [data-testid="stAlertContainer"],
+.st-key-login_card div[role="alert"] {{
+    background: rgba(8, 28, 64, 0.6) !important;
+    border: 1px solid rgba(251, 191, 36, 0.6) !important;
+    border-radius: 14px !important;
+}}
+.st-key-login_card [data-testid="stAlert"] *,
+.st-key-login_card div[role="alert"] * {{
+    color: #fef3c7 !important;
+}}
+.st-key-login_card [data-testid="stAlert"] code {{
+    background: rgba(255, 255, 255, 0.12) !important;
+}}
+/* "Press Enter to submit form" hint. */
+.st-key-login_card [data-testid="InputInstructions"] {{ color: rgba(11,27,58,0.55) !important; }}
 
 .login-footer {{
     font-size: 11px;
@@ -237,7 +277,7 @@ def require_login():
 
             st.markdown(
                 '<div class="login-footer">Patient data is stored without any personally '
-                'identifying information.</div>',
+                'identifying information. (UI v5)</div>',
                 unsafe_allow_html=True,
             )
 
