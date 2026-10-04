@@ -20,7 +20,8 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import db
-from auth import require_login, logout_control
+import settings as ui_settings
+from auth import require_login, _do_logout
 from branding import GRADIENT
 from preprocessing import ALL_FEATURES
 from referral import check_referral_criteria
@@ -38,6 +39,14 @@ st.set_page_config(
 
 db.init_db()
 require_login()  # halts here until the user signs in successfully
+
+# Per-user display settings (text size, density, ...). Loaded once per login
+# session from the database; changes made in the settings popover are saved
+# back to it, so they persist across logins.
+if "ui_settings" not in st.session_state:
+    st.session_state["ui_settings"] = ui_settings.sanitize(
+        db.get_user_settings(st.session_state.get("username"))
+    )
 
 
 # ------------------------------------------------------------------
@@ -106,21 +115,17 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+# Status line ABOVE the banner: date + who is signed in, read together.
+st.markdown(
+    f"<div style='text-align:right; font-size:0.8125rem; opacity:0.85; margin-bottom:6px;'>"
+    f"📅 {datetime.date.today().strftime('%B %d, %Y')} &nbsp;·&nbsp; "
+    f"👤 Logged in as <b>{st.session_state.get('username')}</b> ({st.session_state.get('role')})"
+    f"</div>",
+    unsafe_allow_html=True,
+)
 with st.container(key="dashboard_header"):
-    header_col1, header_col2 = st.columns([3, 1])
-    with header_col1:
-        st.markdown(
-            '### <span class="heartbeat-icon">🫀</span> Explainable ML Analytics Dashboard',
-            unsafe_allow_html=True,
-        )
-        st.caption("WHO/PhilPEN Cardiovascular Risk Classification")
-    with header_col2:
-        st.markdown(
-            f"<div style='text-align:right; font-size:13px; opacity:0.9;'>"
-            f"📅 {datetime.date.today().strftime('%B %d, %Y')}</div>",
-            unsafe_allow_html=True,
-        )
-        logout_control()
+    st.markdown("### Explainable ML Analytics Dashboard")
+    st.caption("WHO/PhilPEN Cardiovascular Risk Classification")
 
 # ------------------------------------------------------------------
 # Global visual polish — soft shadows on card panels, a light page
@@ -139,10 +144,10 @@ st.markdown(
     .module-badge {{
         display: inline-flex; align-items: center; justify-content: center;
         width: 26px; height: 26px; border-radius: 8px;
-        background: {GRADIENT}; color: #ffffff; font-weight: 700; font-size: 13px;
+        background: {GRADIENT}; color: #ffffff; font-weight: 700; font-size:0.8125rem;
         margin-right: 8px; vertical-align: middle;
     }}
-    .module-heading {{ font-size: 18px; font-weight: 700; color: inherit; vertical-align: middle; }}
+    .module-heading {{ font-size:1.125rem; font-weight: 700; color: inherit; vertical-align: middle; }}
     .rec-tile {{
         border: 1px solid rgba(128,128,128,0.35); border-radius: 12px; padding: 14px;
         min-height: 170px; box-shadow: 0 2px 10px rgba(0,0,0,0.05);
@@ -151,12 +156,45 @@ st.markdown(
     .rec-icon-badge {{
         display: inline-flex; align-items: center; justify-content: center;
         width: 36px; height: 36px; border-radius: 10px;
-        background-color: rgba(99,102,241,0.2); font-size: 18px; margin-bottom: 6px;
+        background-color: rgba(99,102,241,0.2); font-size:1.125rem; margin-bottom: 6px;
     }}
+    /* Animated recommendation icons (pure CSS, so no image files are needed).
+       Each emoji gets a motion that fits its meaning. */
+    .rec-icon-badge {{ width: 48px; height: 48px; font-size:1.625rem; border-radius: 14px; }}
+    .rec-anim {{ display: inline-block; }}
+    @keyframes recPulse  {{ 0%,100% {{ transform: scale(1); }} 50% {{ transform: scale(1.25); }} }}
+    @keyframes recBounce {{ 0%,100% {{ transform: translateY(0); }} 50% {{ transform: translateY(-5px); }} }}
+    @keyframes recWalk   {{ 0%,100% {{ transform: translateX(-4px) rotate(-6deg); }} 50% {{ transform: translateX(4px) rotate(6deg); }} }}
+    @keyframes recSway   {{ 0%,100% {{ transform: rotate(-12deg); }} 50% {{ transform: rotate(12deg); }} }}
+    @keyframes recDrip   {{ 0% {{ transform: translateY(-4px); opacity: 0.4; }} 60% {{ transform: translateY(3px); opacity: 1; }} 100% {{ transform: translateY(-4px); opacity: 0.4; }} }}
+    @keyframes recSpin   {{ from {{ transform: rotate(0deg); }} to {{ transform: rotate(360deg); }} }}
+    @keyframes recFlip   {{ 0%,100% {{ transform: rotateY(0deg); }} 50% {{ transform: rotateY(180deg); }} }}
+    .anim-pulse  {{ animation: recPulse 1.3s ease-in-out infinite; }}
+    .anim-bounce {{ animation: recBounce 1.1s ease-in-out infinite; }}
+    .anim-walk   {{ animation: recWalk 0.9s ease-in-out infinite; }}
+    .anim-sway   {{ animation: recSway 1.8s ease-in-out infinite; transform-origin: 50% 20%; }}
+    .anim-drip   {{ animation: recDrip 1.4s ease-in-out infinite; }}
+    .anim-spin   {{ animation: recSpin 4s linear infinite; }}
+    .anim-flip   {{ animation: recFlip 2.6s ease-in-out infinite; }}
+    @media (prefers-reduced-motion: reduce) {{ .rec-anim {{ animation: none !important; }} }}
     </style>
     """,
     unsafe_allow_html=True,
 )
+
+
+# Which CSS animation each recommendation icon gets (see .anim-* styles above).
+REC_ICON_ANIMATION = {
+    "🩺": "anim-pulse",   # heartbeat-style pulse
+    "🥗": "anim-bounce",  # tossed salad
+    "🩸": "anim-drip",
+    "⚖️": "anim-sway",    # scale tipping
+    "🚭": "anim-pulse",
+    "🍷": "anim-sway",
+    "🚶": "anim-walk",
+    "🧬": "anim-spin",
+    "📋": "anim-flip",
+}
 
 
 def module_badge(number: int, title: str) -> str:
@@ -179,48 +217,125 @@ def module_badge(number: int, title: str) -> str:
 st.markdown(
     f"""
     <style>
-    section[data-testid="stSidebar"] {{ background: linear-gradient(180deg, #21295C 0%, #0b1b3a 100%); }}
-    section[data-testid="stSidebar"] * {{ color: #ffffff; }}
-    .nav-brand {{ font-size: 18px; font-weight: 700; margin: 4px 0 2px 0; }}
-    .nav-sub {{ font-size: 12px; opacity: 0.7; margin-bottom: 18px; }}
-    section[data-testid="stSidebar"] div[role="radiogroup"] {{ gap: 6px; }}
-    section[data-testid="stSidebar"] div[role="radiogroup"] label {{
-        padding: 10px 14px; border-radius: 12px; width: 100%; cursor: pointer;
-        transition: background 0.15s ease;
+    /* Slim floating icon rail (dark navy, rounded), like a modern health-app
+       dashboard: only two pages, so icons alone are enough and the main area
+       gets the space back. Hover tooltips name each page. */
+    section[data-testid="stSidebar"] {{
+        width: 92px !important; min-width: 92px !important; max-width: 92px !important;
+        background: transparent !important;
     }}
-    section[data-testid="stSidebar"] div[role="radiogroup"] label:hover {{ background: rgba(255,255,255,0.1); }}
-    section[data-testid="stSidebar"] div[role="radiogroup"] label > div:first-child {{ display: none; }}
-    section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) {{
-        background: linear-gradient(90deg, #22d3ee, #38bdf8);
+    section[data-testid="stSidebar"] > div:first-child {{ width: 92px !important; }}
+    [data-testid="stSidebarContent"] {{
+        background: linear-gradient(180deg, #21295C 0%, #0b1b3a 100%);
+        border-radius: 26px;
+        margin: 10px 0 10px 10px;
+        height: calc(100vh - 20px);
+        box-shadow: 0 6px 24px rgba(11, 27, 58, 0.35);
     }}
-    section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) * {{
-        color: #0b1b3a !important; font-weight: 700;
+    [data-testid="stSidebarCollapseButton"],
+    [data-testid="stSidebarCollapsedControl"],
+    [data-testid="stSidebarResizeHandle"] {{ display: none !important; }}
+    [data-testid="stSidebarContent"] [data-testid="stSidebarUserContent"] {{ padding: 18px 0 0 0; }}
+    .nav-logo {{ text-align: center; font-size:1.875rem; line-height: 1; margin: 6px 0 0 0; }}
+    [data-testid="stSidebarUserContent"] [data-testid="stVerticalBlock"] {{ gap: 0 !important; }}
+    section[data-testid="stSidebar"] .stButton button[aria-label="Log out"]:hover,
+    .st-key-rail_logout button:hover {{ background: rgba(239, 68, 68, 0.3) !important; }}
+    section[data-testid="stSidebar"] .stButton {{ display: flex; justify-content: center; margin-bottom: 10px; }}
+    section[data-testid="stSidebar"] .stButton button {{
+        width: 50px; height: 50px; min-height: 50px; padding: 0;
+        border-radius: 16px; border: none;
+        background: transparent; color: rgba(255,255,255,0.75);
+        transition: background 0.15s ease, color 0.15s ease;
     }}
+    section[data-testid="stSidebar"] .stButton button:hover {{
+        background: rgba(255,255,255,0.12); color: #ffffff;
+    }}
+    section[data-testid="stSidebar"] .stButton button p {{ display: none; }}
+    section[data-testid="stSidebar"] .stButton button span {{ font-size:1.625rem; }}
+    /* Active page = cyan gradient tile (the "primary" button). */
+    section[data-testid="stSidebar"] .stButton button[kind="primary"] {{
+        background: linear-gradient(135deg, #22d3ee, #38bdf8);
+        color: #0b1b3a; box-shadow: 0 0 16px rgba(34, 211, 238, 0.45);
+    }}
+    section[data-testid="stSidebar"] [data-testid="stPopover"] {{ display: flex; justify-content: center; margin-bottom: 10px; }}
+    section[data-testid="stSidebar"] [data-testid="stPopover"] button {{
+        width: 50px; height: 50px; min-height: 50px; padding: 0;
+        border-radius: 16px; border: none; background: transparent; color: rgba(255,255,255,0.75);
+    }}
+    section[data-testid="stSidebar"] [data-testid="stPopover"] button:hover {{ background: rgba(255,255,255,0.12); color: #ffffff; }}
+    section[data-testid="stSidebar"] [data-testid="stPopover"] button p {{ display: none; }}
+    section[data-testid="stSidebar"] [data-testid="stPopover"] button span {{ font-size: 26px; }}
+    section[data-testid="stSidebar"] [data-testid="stPopover"] button svg:last-child {{ display: none; }}
     .stat-card {{
         border: 1px solid rgba(128,128,128,0.35); border-radius: 14px; padding: 14px 16px;
         background-color: rgba(128,128,128,0.08); box-shadow: 0 2px 12px rgba(0,0,0,0.12);
     }}
-    .stat-label {{ font-size: 12px; opacity: 0.75; }}
-    .stat-value {{ font-size: 26px; font-weight: 700; }}
+    .stat-label {{ font-size:0.75rem; opacity: 0.75; }}
+    .stat-value {{ font-size:1.625rem; font-weight: 700; }}
     </style>
     """,
     unsafe_allow_html=True,
 )
-with st.sidebar:
-    st.markdown(
-        '<div class="nav-brand"><span class="heartbeat-icon">🫀</span> CVD Risk</div>'
-        '<div class="nav-sub">Explainable ML Dashboard</div>',
-        unsafe_allow_html=True,
-    )
-    page = st.radio(
-        "Navigation",
-        ["🏠  Dashboard", "📑  Reports"],
-        key="nav_page",
-        label_visibility="collapsed",
-    )
-    st.caption(f"Signed in as {st.session_state.get('username')} ({st.session_state.get('role')})")
 
-if page.endswith("Reports"):
+def _apply_settings():
+    """Reads the settings widgets, validates, applies and saves them."""
+    new = ui_settings.sanitize({
+        "text_size": st.session_state.get("set_text_size"),
+        "density": st.session_state.get("set_density"),
+        "reduce_motion": st.session_state.get("set_reduce_motion"),
+        "high_contrast": st.session_state.get("set_high_contrast"),
+    })
+    st.session_state["ui_settings"] = new
+    db.save_user_settings(st.session_state.get("username"), new)
+
+
+if "nav_page" not in st.session_state:
+    st.session_state["nav_page"] = "Dashboard"
+
+st.markdown(ui_settings.build_css(st.session_state["ui_settings"]), unsafe_allow_html=True)
+
+with st.sidebar:
+    st.markdown('<div class="nav-logo"><span class="heartbeat-icon">🫀</span></div>', unsafe_allow_html=True)
+    # Spacer pushes the two page buttons to the vertical middle of the rail.
+    st.markdown("<div style='height: max(0px, calc(50vh - 168px));'></div>", unsafe_allow_html=True)
+    if st.button(
+        " ", key="nav_btn_dashboard", icon=":material/dashboard:", help="Dashboard",
+        type="primary" if st.session_state["nav_page"] == "Dashboard" else "secondary",
+    ):
+        st.session_state["nav_page"] = "Dashboard"
+        st.rerun()
+    if st.button(
+        " ", key="nav_btn_reports", icon=":material/description:", help="Reports — prediction history",
+        type="primary" if st.session_state["nav_page"] == "Reports" else "secondary",
+    ):
+        st.session_state["nav_page"] = "Reports"
+        st.rerun()
+    # Log out sits at the bottom of the rail.
+    st.markdown("<div style='height: max(0px, calc(50vh - 228px));'></div>", unsafe_allow_html=True)
+    # Settings (text size, density, motion, contrast) — saved per user.
+    with st.popover("", icon=":material/settings:", help="Display settings"):
+        st.markdown("**Display settings**")
+        _cur = st.session_state["ui_settings"]
+        st.radio(
+            "Text size", list(ui_settings.TEXT_SIZES), key="set_text_size",
+            index=list(ui_settings.TEXT_SIZES).index(_cur["text_size"]),
+            horizontal=True, on_change=_apply_settings,
+        )
+        st.radio(
+            "Density", list(ui_settings.DENSITIES), key="set_density",
+            index=list(ui_settings.DENSITIES).index(_cur["density"]),
+            horizontal=True, on_change=_apply_settings,
+        )
+        st.toggle("Reduce motion", value=_cur["reduce_motion"], key="set_reduce_motion",
+                  help="Turns off the beating heart and animated icons.", on_change=_apply_settings)
+        st.toggle("High contrast", value=_cur["high_contrast"], key="set_high_contrast",
+                  help="Stronger borders and fully opaque text.", on_change=_apply_settings)
+    if st.button(" ", key="rail_logout", icon=":material/logout:", help="Log out"):
+        _do_logout()
+
+page = st.session_state["nav_page"]
+
+if page == "Reports":
     st.markdown(module_badge("📑", "Reports — Prediction History"), unsafe_allow_html=True)
     st.caption("Every prediction saved to the database, newest first. No personally identifying information is stored.")
     history_rows = db.get_recent_predictions(limit=1000)
@@ -406,8 +521,8 @@ with col2:
                 <div style='background-color:{color}20; border:2px solid {color};
                             border-radius:10px; padding:16px; text-align:center; margin-bottom:16px;
                             box-shadow:0 2px 10px rgba(0,0,0,0.05);'>
-                    <div style='font-size:14px; opacity:0.75;'>Predicted Risk Category</div>
-                    <div style='font-size:28px; font-weight:700; color:{color};'>{risk_category.upper()}</div>
+                    <div style='font-size:0.875rem; opacity:0.75;'>Predicted Risk Category</div>
+                    <div style='font-size:1.75rem; font-weight:700; color:{color};'>{risk_category.upper()}</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -458,8 +573,8 @@ with col2:
                 f"""
                 <div style='background-color:rgba(128,128,128,0.12); border:2px solid rgba(128,128,128,0.5);
                             border-radius:10px; padding:12px; text-align:center; margin-bottom:8px;'>
-                    <div style='font-size:13px; opacity:0.75;'>Model Confidence Score</div>
-                    <div style='font-size:28px; font-weight:700;'>{confidence:.1f}%</div>
+                    <div style='font-size:0.8125rem; opacity:0.75;'>Model Confidence Score</div>
+                    <div style='font-size:1.75rem; font-weight:700;'>{confidence:.1f}%</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -516,10 +631,10 @@ with st.container(border=True):
             f"""
             <div style='background-color:#fee2e2; border:2px solid #dc2626; border-radius:10px;
                         padding:14px 18px; margin-bottom:16px; box-shadow:0 2px 10px rgba(0,0,0,0.05);'>
-                <div style='font-weight:700; color:#991b1b; font-size:16px;'>
+                <div style='font-weight:700; color:#991b1b; font-size:1rem;'>
                     ⚠️ Refer to a Higher-Level Facility
                 </div>
-                <ul style='margin:8px 0 2px 18px; color:#7f1d1d; font-size:13px;'>
+                <ul style='margin:8px 0 2px 18px; color:#7f1d1d; font-size:0.8125rem;'>
                     {reasons_html}
                 </ul>
             </div>
@@ -547,9 +662,9 @@ with st.container(border=True):
             st.markdown(
                 f"""
                 <div class="rec-tile">
-                    <div class="rec-icon-badge">{rec['icon']}</div>
+                    <div class="rec-icon-badge"><span class="rec-anim {REC_ICON_ANIMATION.get(rec['icon'], 'anim-pulse')}">{rec['icon']}</span></div>
                     <div style='font-weight:600; margin-top:4px;'>{rec['title']}</div>
-                    <div style='font-size:12px; opacity:0.75; margin-top:4px;'>{rec['desc']}</div>
+                    <div style='font-size:0.75rem; opacity:0.75; margin-top:4px;'>{rec['desc']}</div>
                 </div>
                 """,
                 unsafe_allow_html=True,

@@ -13,6 +13,7 @@ PBKDF2-HMAC-SHA256 and a unique random salt per user (both from Python's
 standard library, so no extra dependency is needed).
 """
 
+import json
 import sqlite3
 import hashlib
 import hmac
@@ -80,6 +81,13 @@ def init_db():
             CREATE TABLE IF NOT EXISTS system_config (
                 key TEXT PRIMARY KEY,
                 value TEXT
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_settings (
+                username TEXT PRIMARY KEY,
+                settings_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             )
         """)
         _migrate_add_auth_columns(conn)
@@ -203,3 +211,39 @@ def get_recent_predictions(limit: int = 20):
             SELECT * FROM predictions ORDER BY created_at DESC LIMIT ?
         """, (limit,)).fetchall()
         return [dict(row) for row in rows]
+
+
+def get_user_settings(username: str) -> dict:
+    """Returns the saved display settings (text size, density, ...) for a
+    user, or {} if none are saved yet / the stored JSON is unreadable. The
+    caller is expected to validate the values (see settings.sanitize)."""
+    if not username:
+        return {}
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT settings_json FROM user_settings WHERE username = ?", (username,)
+        ).fetchone()
+    if row is None:
+        return {}
+    try:
+        data = json.loads(row["settings_json"])
+    except (TypeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_user_settings(username: str, settings: dict):
+    """Saves (inserts or replaces) a user's display settings."""
+    if not username:
+        return
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO user_settings (username, settings_json, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(username) DO UPDATE SET
+                settings_json = excluded.settings_json,
+                updated_at = excluded.updated_at
+            """,
+            (username, json.dumps(settings), datetime.now().isoformat()),
+        )
