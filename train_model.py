@@ -6,13 +6,15 @@ Forest, SVM, XGBoost), tunes each with GridSearchCV, selects the best
 performer, fits a SHAP explainer on it, and serializes everything the
 Streamlit app needs to data/patients.csv -> models/*.joblib
 
-Methodology (matches the paper's Hyperparameter Optimization,
-Cross-Validation, and Model Evaluation sections):
-  - Hyperparameter optimization: GridSearchCV over the parameter grids
-    below, one per candidate algorithm.
-  - Cross-validation: 10-fold CV on the TRAINING set only, used both
-    to select each model's best hyperparameters and to report a
-    cross-validated performance estimate.
+Methodology (matches Chapter IV, 4.1.6 and 4.1.8 of the paper):
+  - Data: ENNS records labelled with the five WHO/ISH (PhilPEN) chart levels
+    (see prepare_enns_data.py). Household-grouped 80/20 split, so no household
+    appears in both sets; random_state = 42.
+  - Only XGBoost is tuned: five settings, three-fold household-grouped
+    cross-validation on the TRAINING set only. The other models run with fixed
+    scikit-learn settings. No SMOTE.
+  - XGBoost is the DEPLOYED model family (class probabilities for the gauge and
+    exact TreeSHAP), whichever model scores highest; the comparison is printed.
   - Model evaluation: the tuned models are evaluated on the held-out,
     independent TEST set using weighted F1-score (primary selection
     criterion, appropriate given class imbalance across WHO/PhilPEN
@@ -32,7 +34,7 @@ import matplotlib.pyplot as plt
 
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import GridSearchCV, train_test_split
+from sklearn.model_selection import GridSearchCV, GroupKFold, GroupShuffleSplit
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder, label_binarize
 from sklearn.svm import SVC
@@ -61,82 +63,63 @@ LABEL_ENCODER_PATH = "models/label_encoder.joblib"
 EXPLAINER_PATH = "models/shap_explainer.joblib"
 FEATURE_NAMES_PATH = "models/feature_names.joblib"
 
-CV_FOLDS = 10
+CV_FOLDS = 3
 SCORING = "f1_weighted"
+
+
+DEPLOYED_MODEL = "Extreme Gradient Boosting (XGBoost)"
 
 
 def load_data():
     df = pd.read_csv(DATA_PATH)
     X = df[ALL_FEATURES]
     y = df[TARGET]
-    return X, y
+    # household_group (from prepare_enns_data.py) keeps members of one household on the same side of the split
+    groups = df["household_group"] if "household_group" in df.columns else None
+    return X, y, groups
 
 
 def get_candidate_models():
-    """Each entry: (name, estimator, param_grid for GridSearchCV).
-    Parameter grids match the specific parameters named in the paper's
-    Hyperparameter Optimization section for each algorithm. Grid sizes
-    are kept modest (2-3 values per parameter) so a full run completes
-    in reasonable time on a laptop with the current dataset size; widen
-    them once training on the real, larger DOH/PhilPEN dataset if desired."""
+    """(estimator, param_grid) per model. Only XGBoost is tuned: five settings
+    (a list of one-setting grids), three-fold household-grouped CV. The other
+    models use fixed settings (an empty grid means one candidate)."""
+    xgb_settings = [
+        {"clf__n_estimators": [100], "clf__max_depth": [3], "clf__learning_rate": [0.1]},
+        {"clf__n_estimators": [200], "clf__max_depth": [4], "clf__learning_rate": [0.1]},
+        {"clf__n_estimators": [300], "clf__max_depth": [4], "clf__learning_rate": [0.1]},
+        {"clf__n_estimators": [300], "clf__max_depth": [6], "clf__learning_rate": [0.05]},
+        {"clf__n_estimators": [400], "clf__max_depth": [6], "clf__learning_rate": [0.1]},
+    ]
     return {
-        "Logistic Regression": (
-            # solver='saga' supports both l1 and l2 penalties for multinomial classification
-            LogisticRegression(max_iter=2000, solver="saga", random_state=42),
-            {
-                "clf__penalty": ["l1", "l2"],           # regularization type
-                "clf__C": [0.1, 1.0, 10.0],             # regularization strength
-            },
-        ),
-        "Decision Tree": (
-            DecisionTreeClassifier(random_state=42),
-            {
-                "clf__max_depth": [4, 8, None],
-                "clf__min_samples_split": [2, 5],
-                "clf__min_samples_leaf": [1, 2],
-            },
-        ),
-        "Random Forest": (
-            RandomForestClassifier(random_state=42),
-            {
-                "clf__n_estimators": [200, 400],
-                "clf__max_depth": [6, None],
-                "clf__min_samples_split": [2, 5],
-            },
-        ),
-        "Support Vector Machine (SVM)": (
-            SVC(probability=True, random_state=42),
-            {
-                "clf__kernel": ["rbf", "linear"],
-                "clf__C": [1.0, 10.0],
-                "clf__gamma": ["scale", "auto"],
-            },
-        ),
-        "Extreme Gradient Boosting (XGBoost)": (
-            XGBClassifier(eval_metric="mlogloss", random_state=42),
-            {
-                "clf__learning_rate": [0.05, 0.1],
-                "clf__max_depth": [3, 6],
-                "clf__n_estimators": [200, 400],
-                "clf__subsample": [0.8, 1.0],
-                "clf__colsample_bytree": [0.8, 1.0],
-            },
-        ),
+        "Logistic Regression": (LogisticRegression(max_iter=2000, random_state=42), {}),
+        "Decision Tree": (DecisionTreeClassifier(random_state=42), {}),
+        "Random Forest": (RandomForestClassifier(n_estimators=200, random_state=42, n_jobs=-1), {}),
+        "Support Vector Machine (SVM)": (SVC(probability=True, random_state=42), {}),
+        "Extreme Gradient Boosting (XGBoost)": (XGBClassifier(eval_metric="mlogloss", random_state=42), xgb_settings),
     }
 
 
 def main():
     print("Loading data...")
-    X, y = load_data()
+    X, y, groups = load_data()
 
     label_encoder = LabelEncoder()
-    y_encoded = label_encoder.fit_transform(y)  # Low/Moderate/High -> 0/1/2
+    y_encoded = label_encoder.fit_transform(y)  # Level 1..Level 5 -> 0..4
     class_names = label_encoder.classes_
     n_classes = len(class_names)
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y_encoded, test_size=0.2, random_state=42, stratify=y_encoded
-    )
+    if groups is not None:
+        splitter = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
+        train_idx, test_idx = next(splitter.split(X, y_encoded, groups))
+    else:
+        rng = np.random.RandomState(42)
+        perm = rng.permutation(len(X))
+        cut = int(len(X) * 0.8)
+        train_idx, test_idx = perm[:cut], perm[cut:]
+    X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+    y_train, y_test = y_encoded[train_idx], y_encoded[test_idx]
+
+    groups_train = groups.iloc[train_idx].to_numpy() if groups is not None else np.arange(len(train_idx))
 
     preprocessor = build_preprocessor()
 
@@ -152,9 +135,9 @@ def main():
         pipe = Pipeline(steps=[("preprocessor", preprocessor), ("clf", estimator)])
 
         # --- Hyperparameter optimization + 10-fold cross-validation on the TRAINING set ---
-        search = GridSearchCV(pipe, param_grid, cv=CV_FOLDS, scoring=SCORING, n_jobs=-1)
-        search.fit(X_train, y_train)
-        cv_score = search.best_score_  # mean weighted-F1 across the 10 folds, best combo
+        search = GridSearchCV(pipe, param_grid, cv=GroupKFold(n_splits=CV_FOLDS), scoring=SCORING, n_jobs=-1)
+        search.fit(X_train, y_train, groups=groups_train)
+        cv_score = search.best_score_  # mean weighted-F1 across the folds, best setting
 
         # --- Evaluation on the independent TEST set ---
         preds = search.predict(X_test)
@@ -180,13 +163,13 @@ def main():
         }
         all_results.append((name, cv_score, test_f1, best_params_for_model))
 
-        # Best model selected by weighted F1-score on the independent test set
-        if test_f1 > best_score:
+        # The deployed model family is fixed (see DEPLOYED_MODEL); the others are comparison only
+        if name == DEPLOYED_MODEL:
             best_score = test_f1
             best_name = name
             best_pipeline = search.best_estimator_
 
-    print(f"\n=== Best model: {best_name} (test weighted-F1={best_score:.4f}) ===")
+    print(f"\n=== Deployed model: {best_name} (test weighted-F1={best_score:.4f}) ===")
 
     # ------------------------------------------------------------------
     # TABLE 1 — Hyperparameter optimization + cross-validation summary
@@ -203,7 +186,7 @@ def main():
         params_str = ", ".join(f"{k}={v}" for k, v in params.items())
         print(f"{rank:<6}{name:<38}{cv_f1:<10.4f}{test_f1:<10.4f}{params_str}{marker}")
     print("=" * SEP_WIDTH)
-    print(f"Dataset: {len(X)} patients  |  Train/test split: {len(X_train)}/{len(X_test)} (stratified)")
+    print(f"Dataset: {len(X)} patients  |  Train/test split: {len(X_train)}/{len(X_test)} (household-grouped)")
     print(f"Cross-validation: {CV_FOLDS}-fold, training set only  |  Risk categories: {', '.join(class_names)}")
     print("=" * SEP_WIDTH + "\n")
 
@@ -240,7 +223,6 @@ def main():
     # plots and would be excessive to generate for all five candidates.
     # ------------------------------------------------------------------
     best_preds = best_pipeline.predict(X_test)
-    best_proba = proba_by_model[best_name]
 
     print(f"Confusion Matrix ({best_name}):")
     cm = confusion_matrix(y_test, best_preds)
@@ -258,38 +240,7 @@ def main():
     fig_cm.savefig("models/confusion_matrix.png", dpi=150, bbox_inches="tight")
     plt.close(fig_cm)
 
-    y_test_bin = label_binarize(y_test, classes=list(range(n_classes)))
-
-    fig_roc, ax_roc = plt.subplots(figsize=(7, 5.5))
-    for i, cname in enumerate(class_names):
-        fpr, tpr, _ = roc_curve(y_test_bin[:, i], best_proba[:, i])
-        roc_auc_i = auc(fpr, tpr)
-        ax_roc.plot(fpr, tpr, label=f"{cname} (AUC = {roc_auc_i:.3f})")
-    ax_roc.plot([0, 1], [0, 1], "k--", linewidth=1, label="Chance")
-    ax_roc.set_xlabel("False Positive Rate")
-    ax_roc.set_ylabel("True Positive Rate")
-    ax_roc.set_title(f"ROC Curve (One-vs-Rest)\n{best_name}", fontsize=12)
-    ax_roc.legend(loc="lower right", fontsize=9)
-    plt.tight_layout()
-    fig_roc.savefig("models/roc_curve.png", dpi=150, bbox_inches="tight")
-    plt.close(fig_roc)
-
-    fig_pr, ax_pr = plt.subplots(figsize=(7, 5.5))
-    for i, cname in enumerate(class_names):
-        prec, rec, _ = precision_recall_curve(y_test_bin[:, i], best_proba[:, i])
-        ax_pr.plot(rec, prec, label=f"{cname}")
-    ax_pr.set_xlabel("Recall")
-    ax_pr.set_ylabel("Precision")
-    ax_pr.set_title(f"Precision-Recall Curve (One-vs-Rest)\n{best_name}", fontsize=12)
-    ax_pr.legend(loc="lower left", fontsize=9)
-    plt.tight_layout()
-    fig_pr.savefig("models/pr_curve.png", dpi=150, bbox_inches="tight")
-    plt.close(fig_pr)
-
-    print("Saved diagnostic plots for the selected model:")
-    print("  models/confusion_matrix.png")
-    print("  models/roc_curve.png")
-    print("  models/pr_curve.png\n")
+    print("Saved models/confusion_matrix.png\n")
 
     # Build a SHAP explainer appropriate to the model type
     tree_based = best_name in ("Decision Tree", "Random Forest", "Extreme Gradient Boosting (XGBoost)")

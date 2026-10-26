@@ -91,6 +91,15 @@ def init_db():
             )
         """)
         _migrate_add_auth_columns(conn)
+        _migrate_add_survey_columns(conn)
+
+
+def _migrate_add_survey_columns(conn):
+    """Adds the optional case_code and on_medication columns to an existing predictions table."""
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(predictions)").fetchall()}
+    for col in ("case_code", "on_medication"):
+        if col not in existing:
+            conn.execute(f"ALTER TABLE predictions ADD COLUMN {col} TEXT")
 
 
 def _migrate_add_auth_columns(conn):
@@ -185,8 +194,8 @@ def insert_prediction(record: dict):
                 created_at, age, sex, systolic_bp, diastolic_bp,
                 total_cholesterol, fasting_glucose, bmi,
                 smoking_status, alcohol_consumption, physical_activity,
-                family_history_cvd, predicted_risk_category, confidence_score
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                family_history_cvd, predicted_risk_category, confidence_score, case_code, on_medication
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             datetime.now().isoformat(),
             _to_native(record.get("age")),
@@ -202,7 +211,24 @@ def insert_prediction(record: dict):
             record.get("family_history_cvd"),
             record.get("predicted_risk_category"),
             _to_native(record.get("confidence_score")),
+            (record.get("case_code") or None),
+            record.get("on_medication"),
         ))
+
+
+def get_case_history(case_code: str, limit: int = 50):
+    """All saved predictions sharing an optional, made-up case code (newest
+    first), so one patient's results can be tracked over visits without a
+    name or ID being stored. Matching ignores case and surrounding spaces."""
+    code = (case_code or "").strip()
+    if not code:
+        return []
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM predictions WHERE lower(case_code) = lower(?) ORDER BY created_at DESC LIMIT ?",
+            (code, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 def get_recent_predictions(limit: int = 20):

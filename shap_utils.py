@@ -12,13 +12,13 @@ import plotly.graph_objects as go
 from preprocessing import CATEGORICAL_FEATURES
 
 
-def compute_shap_values(explainer, preprocessor, feature_names, patient_df, predicted_class_index):
+def compute_shap_values(explainer, preprocessor, feature_names, patient_df, predicted_class_index, direction_weights=None):
     """
     Returns a dict of {feature_name: shap_value} for the predicted class,
     for a single-row patient_df (already in raw/original column form).
 
     One-hot encoding turns each categorical field into multiple columns
-    (e.g. family_history_cvd_Yes, family_history_cvd_No). SHAP computes a
+    (e.g. smoking_status_Never, smoking_status_Current). SHAP computes a
     value for every column regardless of whether it's the patient's actual
     answer, which would otherwise show a category the patient did NOT
     select (e.g. "_Yes") as a contributing factor for a patient who
@@ -32,13 +32,25 @@ def compute_shap_values(explainer, preprocessor, feature_names, patient_df, pred
     shap_values = explainer.shap_values(X_transformed)
 
     # TreeExplainer on multi-class returns a list of arrays (one per class)
-    # or a 3D array depending on SHAP version; handle both.
+    # or a 3D array depending on SHAP version; normalise to (classes, features).
     if isinstance(shap_values, list):
-        class_shap = shap_values[predicted_class_index][0]
+        per_class = np.array([sv[0] for sv in shap_values])
     elif shap_values.ndim == 3:
-        class_shap = shap_values[0, :, predicted_class_index]
+        per_class = shap_values[0].T
     else:
-        class_shap = shap_values[0]
+        per_class = shap_values[0][None, :]
+
+    if direction_weights is not None and per_class.shape[0] == len(direction_weights):
+        # Direction of risk: with five ordered levels, a bar for the predicted
+        # class alone is misleading (for a Level 1 patient a positive value
+        # means "towards Level 1", i.e. lower risk). Combine the class values
+        # with centred severity weights so positive always means "pushes
+        # towards a higher level" and negative "towards a lower level".
+        w = np.asarray(direction_weights, dtype=float)
+        w = w - w.mean()
+        class_shap = (w[:, None] * per_class).sum(axis=0)
+    else:
+        class_shap = per_class[min(predicted_class_index, per_class.shape[0] - 1)]
 
     raw_dict = dict(zip(feature_names, class_shap))
     return _keep_only_active_categories(raw_dict, patient_df)
@@ -77,8 +89,8 @@ def build_shap_bar_chart(shap_dict: dict, top_n: int = 8):
         textposition="outside",
     ))
     fig.update_layout(
-        title="SHAP Value (Impact on Model Output)",
-        xaxis_title="SHAP Value",
+        title="Local SHAP: effect on the predicted level",
+        xaxis_title="Towards a lower level  ←  SHAP value  →  towards a higher level",
         margin=dict(l=10, r=10, t=40, b=10),
         height=350,
         showlegend=False,
@@ -109,6 +121,7 @@ def readable_feature_name(raw_name: str) -> str:
 # when SHAP flags that feature as increasing this patient's risk.
 BASE_FEATURES = [
     "age",
+    "sex",
     "systolic_bp",
     "diastolic_bp",
     "total_cholesterol",
@@ -117,7 +130,6 @@ BASE_FEATURES = [
     "smoking_status",
     "alcohol_consumption",
     "physical_activity",
-    "family_history_cvd",
 ]
 
 RECOMMENDATIONS = {
@@ -161,16 +173,25 @@ RECOMMENDATIONS = {
         "title": "Increase Physical Activity",
         "desc": "Low physical activity is contributing to your risk. Aim for at least 150 minutes of moderate activity per week, e.g. brisk walking.",
     },
-    "family_history_cvd": {
-        "icon": "🧬",
-        "title": "Prioritize Regular Check-ups",
-        "desc": "Family history is contributing to your risk. Since this factor can't be changed, more frequent screening is especially important for you.",
-    },
     "age": {
         "icon": "📋",
         "title": "Prioritize Regular Check-ups",
         "desc": "Age is contributing to your risk. Regular check-ups help catch and manage cardiovascular risk early.",
     },
+}
+
+# For categorical features, a recommendation's advice text is only valid
+# for CERTAIN selected values (e.g. "quit smoking" only makes sense if the
+# patient actually smokes). SHAP can occasionally flag even the "safe"
+# category (e.g. smoking_status = "Never") as marginally risk-increasing
+# for a given patient/model, especially on small or synthetic datasets --
+# without this guard, that would incorrectly surface advice like telling
+# a lifelong non-smoker to quit smoking. Categorical features not listed
+# here (there are none currently) would always be considered applicable.
+CATEGORICAL_RECOMMENDATION_APPLICABLE_VALUES = {
+    "smoking_status": {"Current", "Former"},
+    "alcohol_consumption": {"Current"},
+    "physical_activity": {"Low"},
 }
 
 # Shown when no prediction has been made yet, or as filler if fewer
@@ -195,20 +216,30 @@ def base_feature_name(raw_name: str) -> str:
     return raw_name
 
 
-def get_dynamic_recommendations(shap_dict: dict, top_n: int = 4):
+def get_dynamic_recommendations(shap_dict: dict, top_n: int = 4, patient: dict = None):
     """
     Returns up to top_n recommendation cards for this patient, chosen from
     RECOMMENDATIONS based on which base features have the largest positive
     (risk-increasing) SHAP values. Falls back to DEFAULT_RECOMMENDATIONS
     entries to fill any remaining slots if fewer than top_n factors qualify.
+
+    For categorical features, a recommendation only fires if the patient's
+    ACTUAL selected value is one the advice applies to (see
+    CATEGORICAL_RECOMMENDATION_APPLICABLE_VALUES) -- e.g. smoking-cessation
+    advice is suppressed if the patient's smoking status is "Never", even
+    if SHAP assigned that column a (small) positive value.
     """
-    # Aggregate SHAP value per base feature (categorical one-hot columns collapse together)
+    # Aggregate SHAP value per base feature (categorical one-hot columns collapse together),
+    # and separately track which specific category value is active for each categorical base.
     base_scores = {}
+    base_active_value = {}
     for raw_name, value in shap_dict.items():
         if value <= 0:
             continue  # only risk-increasing factors
         base = base_feature_name(raw_name)
         base_scores[base] = base_scores.get(base, 0) + value
+        if base in CATEGORICAL_FEATURES and raw_name.startswith(base + "_"):
+            base_active_value[base] = raw_name[len(base) + 1:]
 
     ranked_bases = sorted(base_scores.items(), key=lambda kv: kv[1], reverse=True)
 
@@ -216,7 +247,12 @@ def get_dynamic_recommendations(shap_dict: dict, top_n: int = 4):
     seen_titles = set()
     for base, _ in ranked_bases:
         rec = RECOMMENDATIONS.get(base)
-        if rec and rec["title"] not in seen_titles:
+        if not rec:
+            continue
+        applicable_values = CATEGORICAL_RECOMMENDATION_APPLICABLE_VALUES.get(base)
+        if applicable_values is not None and base_active_value.get(base) not in applicable_values:
+            continue  # e.g. don't tell a "Never" smoker to quit smoking
+        if rec["title"] not in seen_titles:
             cards.append(rec)
             seen_titles.add(rec["title"])
         if len(cards) == top_n:
@@ -231,4 +267,40 @@ def get_dynamic_recommendations(shap_dict: dict, top_n: int = 4):
             if len(cards) == top_n:
                 break
 
-    return cards
+    return _add_patient_cards(cards, patient, top_n)
+
+
+def _add_patient_cards(cards: list, patient: dict, top_n: int) -> list:
+    """Adds diet, glucose and medication cards from the patient's own inputs
+    (suggested by evaluators), replacing generic filler cards first. Pure and
+    optional: with no patient dict the list is returned unchanged."""
+    if not patient:
+        return cards
+    extra = []
+    diet = ["Fill half the plate with vegetables, and add fruit and whole grains."]
+    if patient.get("systolic_bp", 0) >= 130 or patient.get("diastolic_bp", 0) >= 80:
+        diet.append("Cut salt: go easy on bagoong, patis, soy sauce, instant noodles and dried or canned fish.")
+    if (patient.get("fasting_glucose") or 0) >= 100:
+        diet.append("Limit sweet drinks and sweets, and watch white rice portions.")
+    if (patient.get("total_cholesterol") or 0) >= 200:
+        diet.append("Choose fish, skinless chicken and beans over fatty pork and fried food.")
+    if (patient.get("bmi") or 0) >= 23:
+        diet.append("Smaller portions of rice and fatty food, aiming for a BMI under 23.")
+    extra.append({"icon": "🥗", "title": "Healthy Diet", "desc": " ".join(diet)})
+    if (patient.get("fasting_glucose") or 0) >= 126:
+        extra.append({"icon": "🩸", "title": "Glucose in Diabetic Range",
+                      "desc": "Fasting glucose is 126 mg/dL or higher: repeat the test to confirm and review for diabetes."})
+    if patient.get("on_bp_medication") and (patient.get("systolic_bp", 0) >= 140 or patient.get("diastolic_bp", 0) >= 90):
+        extra.append({"icon": "💊", "title": "Review Medication",
+                      "desc": "Blood pressure is still raised on treatment: check adherence and review the dose with the physician."})
+    out = [c for c in cards if c["title"] != "Healthy Diet"]
+    generic = {r["title"] for r in DEFAULT_RECOMMENDATIONS}
+    merged = extra + out
+    # drop generic filler first if over the limit
+    while len(merged) > top_n and any(c["title"] in generic for c in merged):
+        for i in range(len(merged) - 1, -1, -1):
+            if merged[i]["title"] in generic and merged[i]["title"] != "Healthy Diet":
+                merged.pop(i); break
+        else:
+            break
+    return merged[:top_n]

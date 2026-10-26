@@ -24,7 +24,6 @@ CATEGORICAL_FEATURES = [
     "smoking_status",
     "alcohol_consumption",
     "physical_activity",
-    "family_history_cvd",
 ]
 
 TARGET = "risk_category"

@@ -29,9 +29,8 @@ def make_sample_df(n=20, with_missing=False):
         "fasting_glucose": rng.normal(100, 20, size=n),
         "bmi": rng.normal(26, 4, size=n),
         "smoking_status": rng.choice(["Never", "Former", "Current"], size=n),
-        "alcohol_consumption": rng.choice(["None", "Occasional", "Regular"], size=n),
-        "physical_activity": rng.choice(["Yes", "No"], size=n),
-        "family_history_cvd": rng.choice(["Yes", "No"], size=n),
+        "alcohol_consumption": rng.choice(["Never", "Former", "Current"], size=n),
+        "physical_activity": rng.choice(["High", "Low"], size=n),
     })
     if with_missing:
         df.loc[0, "age"] = np.nan

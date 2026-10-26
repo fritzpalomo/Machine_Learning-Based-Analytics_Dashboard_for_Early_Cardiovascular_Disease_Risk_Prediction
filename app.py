@@ -27,6 +27,9 @@ from preprocessing import ALL_FEATURES
 from referral import check_referral_criteria
 from shap_utils import compute_shap_values, build_shap_bar_chart, get_dynamic_recommendations
 from validation import validate_patient_input
+from bmi import compute_bmi, bmi_category
+import explain
+from levels import LEVEL_NAMES, level_color, composite_score, chart_reference
 
 # ------------------------------------------------------------------
 # Page config
@@ -194,6 +197,7 @@ REC_ICON_ANIMATION = {
     "🚶": "anim-walk",
     "🧬": "anim-spin",
     "📋": "anim-flip",
+    "💊": "anim-bounce",
 }
 
 
@@ -348,14 +352,23 @@ if page == "Reports":
     counts = history_df["predicted_risk_category"].value_counts()
     avg_conf = pd.to_numeric(history_df["confidence_score"], errors="coerce").mean()
 
-    stat_cols = st.columns(5)
-    stats = [
-        ("Total predictions", f"{total}"),
-        ("Low Risk", f"{int(counts.get('Low Risk', 0))}"),
-        ("Moderate Risk", f"{int(counts.get('Moderate Risk', 0))}"),
-        ("High Risk", f"{int(counts.get('High Risk', 0))}"),
-        ("Avg. confidence", f"{avg_conf:.1f}%" if pd.notna(avg_conf) else "—"),
-    ]
+    with st.container(border=True):
+        st.markdown("**Track one patient**")
+        code_q = st.text_input("Case code", key="case_lookup", max_chars=20,
+                               help="The code entered on the Dashboard page. No names or ID numbers are stored.")
+        if code_q.strip():
+            hist = db.get_case_history(code_q)
+            if hist:
+                hdf = pd.DataFrame(hist)[["created_at", "predicted_risk_category", "confidence_score", "age", "systolic_bp", "bmi", "fasting_glucose"]]
+                st.dataframe(hdf, use_container_width=True, hide_index=True)
+            else:
+                st.info("No saved predictions with that case code.")
+    st.write("")
+
+    stat_cols = st.columns(7)
+    stats = [("Total predictions", f"{total}")]
+    stats += [(name.split(" (")[0], f"{int(counts.get(name, 0))}") for name in LEVEL_NAMES]
+    stats += [("Avg. confidence", f"{avg_conf:.1f}%" if pd.notna(avg_conf) else "—")]
     for col, (label, value) in zip(stat_cols, stats):
         col.markdown(
             f'<div class="stat-card"><div class="stat-label">{label}</div>'
@@ -386,6 +399,25 @@ if not MODEL_LOADED:
     )
     st.stop()
 
+st.markdown(
+    """
+    <style>
+    /* Lighter page and softer cards (evaluators asked for a lighter, less cluttered look). */
+    .stApp { background-color: #f8fafc; }
+    @media (prefers-color-scheme: dark) { .stApp { background-color: transparent; } }
+    /* Mobile: stack the modules, larger touch targets. */
+    @media (max-width: 900px) {
+        div[data-testid="stHorizontalBlock"] { flex-direction: column !important; }
+        div[data-testid="stHorizontalBlock"] > div { width: 100% !important; flex: 1 1 100% !important; min-width: 100% !important; }
+        .stButton button, .stFormSubmitButton button { min-height: 48px; font-size: 1rem; }
+        .st-key-dashboard_header { padding: 12px 14px 6px 14px; }
+        .rec-tile { min-height: 0; }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 st.divider()
 
 # ------------------------------------------------------------------
@@ -411,21 +443,36 @@ with col1:
             diastolic_bp = c2.number_input("Diastolic BP (mmHg)", min_value=40, max_value=160, value=84)
             c3, c4 = st.columns(2)
             total_cholesterol = c3.number_input("Total Cholesterol (mg/dL)", min_value=100, max_value=400, value=210)
-            fasting_glucose = c4.number_input("Fasting Blood Glucose (mg/dL)", min_value=50, max_value=400, value=110)
-            bmi = st.number_input("BMI (kg/m²)", min_value=10.0, max_value=60.0, value=27.3, step=0.1)
+            fasting_glucose = c4.number_input("Fasting Blood Glucose (mg/dL)", min_value=50, max_value=400, value=110,
+                                              help="126 mg/dL or higher is in the diabetic range.")
+            st.markdown("**Height and weight** (BMI is worked out for you)")
+            h1, h2 = st.columns(2)
+            height_cm = h1.number_input("Height (cm)", min_value=100, max_value=230, value=165)
+            weight_kg = h2.number_input("Weight (kg)", min_value=25.0, max_value=300.0, value=74.0, step=0.5)
+            st.caption(f"BMI: {compute_bmi(height_cm, weight_kg)} kg/m² ({bmi_category(compute_bmi(height_cm, weight_kg))}) — updates when you click Predict Risk.")
 
             st.markdown("**Lifestyle Information**")
             l1, l2 = st.columns(2)
             smoking_status = l1.selectbox("Smoking Status", ["Never", "Former", "Current"], index=1)
-            alcohol_consumption = l2.selectbox("Alcohol Consumption", ["None", "Occasional", "Regular"], index=1)
-            l3, l4 = st.columns(2)
-            physical_activity = l3.selectbox("Physical Activity", ["Yes", "No"], index=0)
-            family_history_cvd = l4.selectbox("Family History of CVD", ["Yes", "No"], index=0)
+            alcohol_consumption = l2.selectbox("Alcohol Consumption", ["Never", "Former", "Current"], index=2)
+            physical_activity = st.selectbox("Physical Activity", ["High", "Low"], index=0,
+                                             help="High: meets the recommended activity level. Low: below it.")
+            family_history_cvd = st.selectbox("Family History of CVD", ["No", "Yes"], index=0,
+                                              help="Recorded with the case but not used by the model: the ENNS data it was trained on do not include family history.")
+
+            with st.expander("Current medication (optional)"):
+                m1, m2 = st.columns(2)
+                on_bp_medication = m1.checkbox("Blood pressure medicine")
+                on_diabetes_medication = m2.checkbox("Diabetes medicine")
+                on_statin = m1.checkbox("Cholesterol medicine (statin)")
+            case_code = st.text_input("Case code (optional)", max_chars=20,
+                                      help="Use a code you make up (for example RHU-0042) to find this patient's earlier results. Never type a name or ID number.").strip()
 
             submitted = st.form_submit_button("🔍 Predict Risk", use_container_width=True)
 
 # ==================== PREDICTION LOGIC ====================
 if submitted:
+    bmi = compute_bmi(height_cm, weight_kg)
     patient_dict = {
         "age": age,
         "sex": sex,
@@ -437,11 +484,13 @@ if submitted:
         "smoking_status": smoking_status,
         "alcohol_consumption": alcohol_consumption,
         "physical_activity": physical_activity,
-        "family_history_cvd": family_history_cvd,
+        "family_history_cvd": family_history_cvd,  # saved with the case; not a model input
     }
+    extras = {"on_bp_medication": on_bp_medication, "on_diabetes_medication": on_diabetes_medication,
+              "on_statin": on_statin, "case_code": case_code}
     patient_df = pd.DataFrame([patient_dict])[ALL_FEATURES]
 
-    errors, warnings = validate_patient_input(patient_dict)
+    errors, warnings = validate_patient_input({**patient_dict, **extras})
 
     if errors:
         for msg in errors:
@@ -464,27 +513,22 @@ if submitted:
         # first (see DF-05 / db._to_native for the storage-side guard).
         confidence = float(pred_proba[pred_encoded]) * 100
 
-        # A numeric "risk score" (0-100) derived from the model's full
-        # probability distribution across the three categories, using
-        # severity weights (Low=0, Moderate=50, High=100). This is a
-        # DIFFERENT number from "confidence": confidence says how sure the
-        # model is in whichever category it picked; risk_score says how far
-        # along the low-to-high risk spectrum the model's overall belief
-        # sits. It is also NOT the same as the WHO/PhilPEN 10-year CVD
-        # event probability -- the model classifies into 3 categories, it
-        # does not estimate a continuous clinical event probability.
-        RISK_SEVERITY_WEIGHTS = {"Low Risk": 0, "Moderate Risk": 50, "High Risk": 100}
-        risk_score = float(sum(
-            prob * RISK_SEVERITY_WEIGHTS.get(cls, 50)
-            for cls, prob in zip(label_encoder.classes_, pred_proba)
-        ))
+        # Composite Risk Score (0-100): the model's probability for each of the five
+        # PhilPEN levels, weighted Level 1 = 0, Level 2 = 25, Level 3 = 50,
+        # Level 4 = 75, Level 5 = 100. It is a DIFFERENT number from
+        # "confidence" (how sure the model is of the level it picked), and it is
+        # not the WHO/ISH ten-year event probability either.
+        risk_score = composite_score(label_encoder.classes_, pred_proba)
+        chart_ref = chart_reference(patient_dict, extras)
 
         st.session_state["last_prediction"] = {
             "patient_dict": patient_dict,
+            "extras": extras,
             "patient_df": patient_df,
             "predicted_class": predicted_class,
             "confidence": confidence,
             "risk_score": risk_score,
+            "chart_ref": chart_ref,
             "pred_encoded": pred_encoded,
         }
 
@@ -492,6 +536,8 @@ if submitted:
             **patient_dict,
             "predicted_risk_category": predicted_class,
             "confidence_score": round(confidence, 2),
+            "case_code": case_code,
+            "on_medication": ", ".join(n for n, f in (("BP", on_bp_medication), ("diabetes", on_diabetes_medication), ("statin", on_statin)) if f) or None,
         })
 
 # ==================== MODULE 2: PREDICTION RESULT ====================
@@ -506,15 +552,8 @@ with col2:
             confidence = result["confidence"]
             risk_score = result["risk_score"]
 
-            # Color for the "Predicted Risk Category" box is keyed to the risk
-            # category itself (High/Moderate/Low), since that box communicates
-            # the classification, not the confidence.
-            risk_colors = {
-                "Low Risk": "#16a34a",
-                "Moderate Risk": "#f59e0b",
-                "High Risk": "#dc2626",
-            }
-            color = risk_colors.get(risk_category, "#6b7280")
+            # The box colour follows the PhilPEN level (green for Level 1 to red for Level 5).
+            color = level_color(risk_category)
 
             st.markdown(
                 f"""
@@ -522,24 +561,41 @@ with col2:
                             border-radius:10px; padding:16px; text-align:center; margin-bottom:16px;
                             box-shadow:0 2px 10px rgba(0,0,0,0.05);'>
                     <div style='font-size:0.875rem; opacity:0.75;'>Predicted Risk Category</div>
-                    <div style='font-size:1.75rem; font-weight:700; color:{color};'>{risk_category.upper()}</div>
+                    <div style='font-size:1.75rem; font-weight:700; color:{color};'>{risk_category}</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
-
-            # The GAUGE is reserved for the Composite Risk Score — its color-banded
-            # arc (green/yellow/red) genuinely represents a position on a risk
-            # spectrum, so a gauge visual is appropriate here. Bands use equal
-            # thirds of the 0-100 scale since risk_score is a model-derived
-            # weighted index, not the WHO/PhilPEN clinical event-probability
-            # scale, so WHO's exact cut-points (10%, 30%, 40%) don't apply.
-            if risk_score < 33:
-                risk_gauge_color = "#16a34a"
-            elif risk_score < 67:
-                risk_gauge_color = "#f59e0b"
+            ref = result.get("chart_ref")
+            if ref:
+                same = ref["name_full"] == risk_category
+                st.markdown(
+                    f"**WHO/ISH chart level (reference):** {ref['name_full']} — "
+                    + ("matches the model." if same else "differs from the model; follow the chart and clinical judgement.")
+                )
+                st.caption(f"Read from the {ref['chart_name']}: age {ref['age_band']}, {'male' if ref['sex_code']=='M' else 'female'}, "
+                           f"{'smoker' if ref['smoker'] else 'non-smoker'}, {'diabetic' if ref['diabetic'] else 'not diabetic'}, "
+                           f"SBP {ref['sbp_row']}" + (f", cholesterol {ref['cholesterol_column']}." if ref['cholesterol_column'] else "."))
+                lo, hi = ref["level_if_sbp_lower_band"], ref["level_if_sbp_higher_band"]
+                bits = []
+                if lo: bits.append(f"one systolic band lower: Level {lo}")
+                if hi: bits.append(f"one band higher: Level {hi}")
+                if bits:
+                    st.caption("Effect of the systolic band: " + "; ".join(bits) + ".")
+                from philpen_chart import ACTIONS
+                act = ACTIONS[ref["number"]]
+                with st.expander(f"PhilPEN management for Level {ref['number']}"):
+                    st.markdown("- Counsel on diet, physical activity and smoking cessation.")
+                    st.markdown(f"- {act['follow_up']}")
+                    if act["treatment"]:
+                        st.markdown(f"- {act['treatment']}")
+                    st.caption("From the DOH PhilPEN manual. Wording to be checked by a clinician before clinical use.")
             else:
-                risk_gauge_color = "#dc2626"
+                st.caption("The WHO/ISH chart covers ages 40 to 79, so no chart reference is shown for this age.")
+
+            # The gauge is reserved for the Composite Risk Score. Its five bands are
+            # the five PhilPEN levels (equal fifths of the 0-100 scale).
+            risk_gauge_color = level_color(LEVEL_NAMES[min(4, int(risk_score // 20.0001))])
 
             risk_gauge_fig = go.Figure(go.Indicator(
                 mode="gauge+number",
@@ -550,17 +606,16 @@ with col2:
                     "axis": {"range": [0, 100]},
                     "bar": {"color": risk_gauge_color},
                     "steps": [
-                        {"range": [0, 33], "color": "rgba(22,163,74,0.28)"},
-                        {"range": [33, 67], "color": "rgba(245,158,11,0.28)"},
-                        {"range": [67, 100], "color": "rgba(220,38,38,0.28)"},
+                        {"range": [i * 20, (i + 1) * 20], "color": level_color(n) + "47"}
+                        for i, n in enumerate(LEVEL_NAMES)
                     ],
                 },
             ))
             risk_gauge_fig.update_layout(height=250, margin=dict(l=10, r=10, t=40, b=10))
             st.plotly_chart(risk_gauge_fig, use_container_width=True)
             st.caption(
-                "A numeric risk-level indicator (0 = fully Low Risk, 100 = fully High Risk), "
-                "computed from the model's probability across all three categories. This is a "
+                "A numeric risk-level indicator (0 = fully Level 1, 100 = fully Level 5), "
+                "computed from the model's probability across all five PhilPEN levels. This is a "
                 "model-derived index, not the WHO/PhilPEN 10-year cardiovascular event probability."
             )
 
@@ -586,12 +641,18 @@ with col2:
                     "predicted — it does **not** represent the patient's probability of a "
                     "cardiovascular event, which is why it's shown as a plain number rather than "
                     "a colored gauge like the Composite Risk Score above. A model can be highly "
-                    "confident in any outcome, including a Low Risk classification; a low score "
+                    "confident in any outcome, including a Level 1 classification; a low score "
                     "here means the model's probabilities were split closely between categories, "
                     "not that the patient is necessarily at lower risk."
                 )
 
-            st.info("This classification is generated by the machine learning model trained using WHO/PhilPEN cardiovascular risk categories.", icon="ℹ️")
+            with st.expander("📖 How to read these results"):
+                for term, text in explain.GLOSSARY:
+                    st.markdown(f"**{term}.** {text}")
+                pt = result["patient_dict"]
+                st.markdown(f"**BMI used:** {pt['bmi']} kg/m² ({bmi_category(pt['bmi'])}, Asia-Pacific cut-offs).")
+
+            st.info("This classification is generated by the machine learning model trained to reproduce the five WHO/PhilPEN risk levels from the patient's results. It supports, and does not replace, clinical judgement.", icon="ℹ️")
         else:
             st.info("Fill in patient information and click **Predict Risk** to see results here.")
 
@@ -605,15 +666,18 @@ with col3:
             result = st.session_state["last_prediction"]
             shap_dict = compute_shap_values(
                 explainer, preprocessor, feature_names,
-                result["patient_df"], result["pred_encoded"]
+                result["patient_df"], result["pred_encoded"],
+                direction_weights=list(range(len(label_encoder.classes_))),  # Level 1..5 as 0..4
             )
             st.session_state["last_shap_dict"] = shap_dict
             fig = build_shap_bar_chart(shap_dict)
+            st.markdown(explain.why_this_prediction(shap_dict, result["predicted_class"]))
             st.plotly_chart(fig, use_container_width=True)
             st.caption(
                 "SHAP (SHapley Additive exPlanations) values show how each factor "
-                "influenced this patient's classification. Positive values increase "
-                "risk, negative values decrease risk."
+                "influenced this patient's level. Red bars push the result towards a "
+                "higher PhilPEN level, blue bars towards a lower one. They explain the "
+                "model, not the cause of disease."
             )
         else:
             st.info("SHAP explanation will appear here after a prediction is made.")
@@ -650,7 +714,11 @@ with st.container(border=True):
 
     if "last_shap_dict" in st.session_state:
         st.caption("Personalized guidance based on the factors increasing this patient's risk.")
-        edu_items = get_dynamic_recommendations(st.session_state["last_shap_dict"], top_n=4)
+        _lp = st.session_state.get("last_prediction", {})
+        edu_items = get_dynamic_recommendations(
+            st.session_state["last_shap_dict"], top_n=4,
+            patient={**_lp.get("patient_dict", {}), **_lp.get("extras", {})} or None,
+        )
     else:
         st.caption("Based on WHO and DOH cardiovascular disease prevention guidelines. Run a prediction for personalized recommendations.")
         from shap_utils import DEFAULT_RECOMMENDATIONS
