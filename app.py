@@ -3,22 +3,22 @@ app.py
 ------
 Explainable ML Analytics Dashboard - WHO/PhilPEN Cardiovascular Risk
 Classification. Implements the 4-module layout from the wireframe:
-
+ 
   1. Patient Information (input form)
   2. Prediction Result (risk category + confidence gauge)
   3. Local SHAP Explanation (feature contribution chart)
   4. Educational Information (WHO/DOH guideline cards)
-
+ 
 Run: streamlit run app.py
 """
-
+ 
 import datetime
-
+ 
 import joblib
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-
+ 
 import db
 import settings as ui_settings
 from auth import require_login, _do_logout
@@ -30,7 +30,7 @@ from validation import validate_patient_input
 from bmi import compute_bmi, bmi_category
 import explain
 from levels import LEVEL_NAMES, level_color, composite_score, chart_reference
-
+ 
 # ------------------------------------------------------------------
 # Page config
 # ------------------------------------------------------------------
@@ -39,10 +39,10 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
-
+ 
 db.init_db()
 require_login()  # halts here until the user signs in successfully
-
+ 
 # Per-user display settings (text size, density, ...). Loaded once per login
 # session from the database; changes made in the settings popover are saved
 # back to it, so they persist across logins.
@@ -50,8 +50,8 @@ if "ui_settings" not in st.session_state:
     st.session_state["ui_settings"] = ui_settings.sanitize(
         db.get_user_settings(st.session_state.get("username"))
     )
-
-
+ 
+ 
 # ------------------------------------------------------------------
 # Cached loaders — model artifacts only need to load once per session
 # ------------------------------------------------------------------
@@ -63,15 +63,15 @@ def load_artifacts():
     explainer = joblib.load("models/shap_explainer.joblib")
     feature_names = joblib.load("models/feature_names.joblib")
     return model_pipeline, preprocessor, label_encoder, explainer, feature_names
-
-
+ 
+ 
 try:
     model_pipeline, preprocessor, label_encoder, explainer, feature_names = load_artifacts()
     MODEL_LOADED = True
 except FileNotFoundError:
     MODEL_LOADED = False
-
-
+ 
+ 
 # ------------------------------------------------------------------
 # Header — same gradient hero treatment as the login screen (branding.py).
 # Title, subtitle, date, and the logout control all live inside ONE real
@@ -129,7 +129,7 @@ st.markdown(
 with st.container(key="dashboard_header"):
     st.markdown("### Explainable ML Analytics Dashboard")
     st.caption("WHO/PhilPEN Cardiovascular Risk Classification")
-
+ 
 # ------------------------------------------------------------------
 # Global visual polish — soft shadows on card panels, a light page
 # background, and consistent numbered module badges. This keeps the
@@ -184,8 +184,8 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
-
+ 
+ 
 # Which CSS animation each recommendation icon gets (see .anim-* styles above).
 REC_ICON_ANIMATION = {
     "🩺": "anim-pulse",   # heartbeat-style pulse
@@ -199,8 +199,8 @@ REC_ICON_ANIMATION = {
     "📋": "anim-flip",
     "💊": "anim-bounce",
 }
-
-
+ 
+ 
 def module_badge(number: int, title: str) -> str:
     """HTML for a consistent numbered module heading — a small colored
     badge matching the dashboard's branding, replacing the plain emoji
@@ -211,8 +211,8 @@ def module_badge(number: int, title: str) -> str:
         f'<span class="module-heading">{title}</span>'
         f"</div>"
     )
-
-
+ 
+ 
 # ------------------------------------------------------------------
 # Sidebar navigation — two pages: "Dashboard" (the 4 modules) and
 # "Reports" (prediction history from the database). Same navy gradient
@@ -280,7 +280,7 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
+ 
 def _apply_settings():
     """Reads the settings widgets, validates, applies and saves them."""
     new = ui_settings.sanitize({
@@ -291,13 +291,13 @@ def _apply_settings():
     })
     st.session_state["ui_settings"] = new
     db.save_user_settings(st.session_state.get("username"), new)
-
-
+ 
+ 
 if "nav_page" not in st.session_state:
     st.session_state["nav_page"] = "Dashboard"
-
+ 
 st.markdown(ui_settings.build_css(st.session_state["ui_settings"]), unsafe_allow_html=True)
-
+ 
 with st.sidebar:
     st.markdown('<div class="nav-logo"><span class="heartbeat-icon">🫀</span></div>', unsafe_allow_html=True)
     # Spacer pushes the two page buttons to the vertical middle of the rail.
@@ -336,9 +336,9 @@ with st.sidebar:
                   help="Stronger borders and fully opaque text.", on_change=_apply_settings)
     if st.button(" ", key="rail_logout", icon=":material/logout:", help="Log out"):
         _do_logout()
-
+ 
 page = st.session_state["nav_page"]
-
+ 
 if page == "Reports":
     st.markdown(module_badge("📑", "Reports — Prediction History"), unsafe_allow_html=True)
     st.caption("Every prediction saved to the database, newest first. No personally identifying information is stored.")
@@ -346,12 +346,12 @@ if page == "Reports":
     if not history_rows:
         st.info("No predictions have been saved yet. Run a prediction on the Dashboard page and it will appear here.")
         st.stop()
-
+ 
     history_df = pd.DataFrame(history_rows)
     total = len(history_df)
     counts = history_df["predicted_risk_category"].value_counts()
     avg_conf = pd.to_numeric(history_df["confidence_score"], errors="coerce").mean()
-
+ 
     with st.container(border=True):
         st.markdown("**Track one patient**")
         code_q = st.text_input("Case code", key="case_lookup", max_chars=20,
@@ -364,7 +364,7 @@ if page == "Reports":
             else:
                 st.info("No saved predictions with that case code.")
     st.write("")
-
+ 
     stat_cols = st.columns(7)
     stats = [("Total predictions", f"{total}")]
     stats += [(name.split(" (")[0], f"{int(counts.get(name, 0))}") for name in LEVEL_NAMES]
@@ -375,7 +375,7 @@ if page == "Reports":
             f'<div class="stat-value">{value}</div></div>',
             unsafe_allow_html=True,
         )
-
+ 
     st.write("")
     with st.container(border=True):
         categories = sorted(history_df["predicted_risk_category"].dropna().unique())
@@ -390,15 +390,15 @@ if page == "Reports":
             mime="text/csv",
         )
     st.stop()  # Reports page ends here; the Dashboard modules below don't render.
-
-
+ 
+ 
 if not MODEL_LOADED:
     st.warning(
         "No trained model found. Run `python generate_synthetic_data.py` "
         "then `python train_model.py` first, then restart the app."
     )
     st.stop()
-
+ 
 st.markdown(
     """
     <style>
@@ -417,40 +417,43 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
+ 
 st.divider()
-
+ 
 # ------------------------------------------------------------------
 # Layout: 3 main columns (Modules 1-3), then a full-width row (Module 4)
 # ------------------------------------------------------------------
 col1, col2, col3 = st.columns([1.2, 1, 1.2])
-
+ 
 # ==================== MODULE 1: PATIENT INFORMATION ====================
 with col1:
     with st.container(border=True):
         st.markdown(module_badge(1, "Patient Information"), unsafe_allow_html=True)
         st.caption("Enter patient demographic, clinical, and lifestyle information.")
-
+ 
         with st.form("patient_form"):
             st.markdown("**Demographic Information**")
             d1, d2 = st.columns(2)
             age = d1.number_input("Age (years)", min_value=1, max_value=120, value=54)
             sex = d2.selectbox("Sex", ["Male", "Female"])
-
+ 
             st.markdown("**Clinical Information**")
             c1, c2 = st.columns(2)
             systolic_bp = c1.number_input("Systolic BP (mmHg)", min_value=70, max_value=260, value=132)
             diastolic_bp = c2.number_input("Diastolic BP (mmHg)", min_value=40, max_value=160, value=84)
             c3, c4 = st.columns(2)
-            total_cholesterol = c3.number_input("Total Cholesterol (mg/dL)", min_value=100, max_value=400, value=210)
-            fasting_glucose = c4.number_input("Fasting Blood Glucose (mg/dL)", min_value=50, max_value=400, value=110,
-                                              help="126 mg/dL or higher is in the diabetic range.")
+            total_cholesterol = c3.number_input("Total Cholesterol (mg/dL)", min_value=100, max_value=400, value=None,
+                                                placeholder="Leave blank if not measured",
+                                                help="Optional. Blank uses the PhilPEN chart without cholesterol; the model fills the gap with the survey median.")
+            fasting_glucose = c4.number_input("Fasting Blood Glucose (mg/dL)", min_value=50, max_value=400, value=None,
+                                              placeholder="Leave blank if not measured",
+                                              help="Optional. 126 mg/dL or higher is in the diabetic range. Blank is treated as not diabetic unless diabetes medicine is ticked.")
             st.markdown("**Height and weight** (BMI is worked out for you)")
             h1, h2 = st.columns(2)
             height_cm = h1.number_input("Height (cm)", min_value=100, max_value=230, value=165)
             weight_kg = h2.number_input("Weight (kg)", min_value=25.0, max_value=300.0, value=74.0, step=0.5)
             st.caption(f"BMI: {compute_bmi(height_cm, weight_kg)} kg/m² ({bmi_category(compute_bmi(height_cm, weight_kg))}) — updates when you click Predict Risk.")
-
+ 
             st.markdown("**Lifestyle Information**")
             l1, l2 = st.columns(2)
             smoking_status = l1.selectbox("Smoking Status", ["Never", "Former", "Current"], index=1)
@@ -459,7 +462,7 @@ with col1:
                                              help="High: meets the recommended activity level. Low: below it.")
             family_history_cvd = st.selectbox("Family History of CVD", ["No", "Yes"], index=0,
                                               help="Recorded with the case but not used by the model: the ENNS data it was trained on do not include family history.")
-
+ 
             with st.expander("Current medication (optional)"):
                 m1, m2 = st.columns(2)
                 on_bp_medication = m1.checkbox("Blood pressure medicine")
@@ -467,9 +470,9 @@ with col1:
                 on_statin = m1.checkbox("Cholesterol medicine (statin)")
             case_code = st.text_input("Case code (optional)", max_chars=20,
                                       help="Use a code you make up (for example RHU-0042) to find this patient's earlier results. Never type a name or ID number.").strip()
-
+ 
             submitted = st.form_submit_button("🔍 Predict Risk", use_container_width=True)
-
+ 
 # ==================== PREDICTION LOGIC ====================
 if submitted:
     bmi = compute_bmi(height_cm, weight_kg)
@@ -488,10 +491,13 @@ if submitted:
     }
     extras = {"on_bp_medication": on_bp_medication, "on_diabetes_medication": on_diabetes_medication,
               "on_statin": on_statin, "case_code": case_code}
-    patient_df = pd.DataFrame([patient_dict])[ALL_FEATURES]
-
+    # A blank lab value is kept as None in the record and chart lookup, and sent to the
+    # model as NaN so its median imputer fills it (same as during training).
+    patient_df = pd.DataFrame([patient_dict])[ALL_FEATURES].astype(
+        {"total_cholesterol": float, "fasting_glucose": float})
+ 
     errors, warnings = validate_patient_input({**patient_dict, **extras})
-
+ 
     if errors:
         for msg in errors:
             st.error(f"⚠️ {msg}")
@@ -501,9 +507,9 @@ if submitted:
     else:
         for msg in warnings:
             st.warning(f"⚠️ {msg}")
-
+ 
         st.session_state["last_referral_reasons"] = check_referral_criteria(patient_dict)
-
+ 
         pred_encoded = model_pipeline.predict(patient_df)[0]
         pred_proba = model_pipeline.predict_proba(patient_df)[0]
         predicted_class = label_encoder.inverse_transform([pred_encoded])[0]
@@ -512,7 +518,7 @@ if submitted:
         # corrupt BLOB instead of a number unless cast to a native float
         # first (see DF-05 / db._to_native for the storage-side guard).
         confidence = float(pred_proba[pred_encoded]) * 100
-
+ 
         # Composite Risk Score (0-100): the model's probability for each of the five
         # PhilPEN levels, weighted Level 1 = 0, Level 2 = 25, Level 3 = 50,
         # Level 4 = 75, Level 5 = 100. It is a DIFFERENT number from
@@ -520,7 +526,7 @@ if submitted:
         # not the WHO/ISH ten-year event probability either.
         risk_score = composite_score(label_encoder.classes_, pred_proba)
         chart_ref = chart_reference(patient_dict, extras)
-
+ 
         st.session_state["last_prediction"] = {
             "patient_dict": patient_dict,
             "extras": extras,
@@ -531,7 +537,7 @@ if submitted:
             "chart_ref": chart_ref,
             "pred_encoded": pred_encoded,
         }
-
+ 
         db.insert_prediction({
             **patient_dict,
             "predicted_risk_category": predicted_class,
@@ -539,22 +545,22 @@ if submitted:
             "case_code": case_code,
             "on_medication": ", ".join(n for n, f in (("BP", on_bp_medication), ("diabetes", on_diabetes_medication), ("statin", on_statin)) if f) or None,
         })
-
+ 
 # ==================== MODULE 2: PREDICTION RESULT ====================
 with col2:
     with st.container(border=True):
         st.markdown(module_badge(2, "Prediction Result"), unsafe_allow_html=True)
         st.caption("WHO/PhilPEN Cardiovascular Risk Classification.")
-
+ 
         if "last_prediction" in st.session_state:
             result = st.session_state["last_prediction"]
             risk_category = result["predicted_class"]
             confidence = result["confidence"]
             risk_score = result["risk_score"]
-
+ 
             # The box colour follows the PhilPEN level (green for Level 1 to red for Level 5).
             color = level_color(risk_category)
-
+ 
             st.markdown(
                 f"""
                 <div style='background-color:{color}20; border:2px solid {color};
@@ -592,11 +598,11 @@ with col2:
                     st.caption("From the DOH PhilPEN manual. Wording to be checked by a clinician before clinical use.")
             else:
                 st.caption("The WHO/ISH chart covers ages 40 to 79, so no chart reference is shown for this age.")
-
+ 
             # The gauge is reserved for the Composite Risk Score. Its five bands are
             # the five PhilPEN levels (equal fifths of the 0-100 scale).
             risk_gauge_color = level_color(LEVEL_NAMES[min(4, int(risk_score // 20.0001))])
-
+ 
             risk_gauge_fig = go.Figure(go.Indicator(
                 mode="gauge+number",
                 value=risk_score,
@@ -618,7 +624,7 @@ with col2:
                 "computed from the model's probability across all five PhilPEN levels. This is a "
                 "model-derived index, not the WHO/PhilPEN 10-year cardiovascular event probability."
             )
-
+ 
             # Confidence is deliberately shown as a PLAIN NUMBER, not a gauge —
             # giving it a colored, banded arc (the same visual language as the
             # risk gauge above) would make it look like a second risk indicator,
@@ -634,7 +640,7 @@ with col2:
                 """,
                 unsafe_allow_html=True,
             )
-
+ 
             with st.expander("ℹ️ What does the Model Confidence Score mean?"):
                 st.write(
                     "This number shows how certain the model is in the risk category it just "
@@ -645,23 +651,23 @@ with col2:
                     "here means the model's probabilities were split closely between categories, "
                     "not that the patient is necessarily at lower risk."
                 )
-
+ 
             with st.expander("📖 How to read these results"):
                 for term, text in explain.GLOSSARY:
                     st.markdown(f"**{term}.** {text}")
                 pt = result["patient_dict"]
                 st.markdown(f"**BMI used:** {pt['bmi']} kg/m² ({bmi_category(pt['bmi'])}, Asia-Pacific cut-offs).")
-
+ 
             st.info("This classification is generated by the machine learning model trained to reproduce the five WHO/PhilPEN risk levels from the patient's results. It supports, and does not replace, clinical judgement.", icon="ℹ️")
         else:
             st.info("Fill in patient information and click **Predict Risk** to see results here.")
-
+ 
 # ==================== MODULE 3: LOCAL SHAP EXPLANATION ====================
 with col3:
     with st.container(border=True):
         st.markdown(module_badge(3, "Local SHAP Explanation"), unsafe_allow_html=True)
         st.caption("Top factors that contributed to the predicted result.")
-
+ 
         if "last_prediction" in st.session_state:
             result = st.session_state["last_prediction"]
             shap_dict = compute_shap_values(
@@ -681,13 +687,13 @@ with col3:
             )
         else:
             st.info("SHAP explanation will appear here after a prediction is made.")
-
+ 
 st.divider()
-
+ 
 # ==================== MODULE 4: RECOMMENDATIONS ====================
 with st.container(border=True):
     st.markdown(module_badge(4, "Recommendations"), unsafe_allow_html=True)
-
+ 
     referral_reasons = st.session_state.get("last_referral_reasons")
     if referral_reasons:
         reasons_html = "".join(f"<li>{reason}</li>" for reason in referral_reasons)
@@ -711,7 +717,7 @@ with st.container(border=True):
             "does not collect (e.g. personal history of CVD/stroke/kidney disease, proteinuria, "
             "medication response, foot ulcers) must still be assessed clinically."
         )
-
+ 
     if "last_shap_dict" in st.session_state:
         st.caption("Personalized guidance based on the factors increasing this patient's risk.")
         _lp = st.session_state.get("last_prediction", {})
@@ -723,7 +729,7 @@ with st.container(border=True):
         st.caption("Based on WHO and DOH cardiovascular disease prevention guidelines. Run a prediction for personalized recommendations.")
         from shap_utils import DEFAULT_RECOMMENDATIONS
         edu_items = DEFAULT_RECOMMENDATIONS
-
+ 
     edu_cols = st.columns(len(edu_items))
     for edu_col, rec in zip(edu_cols, edu_items):
         with edu_col:
@@ -737,5 +743,7 @@ with st.container(border=True):
                 """,
                 unsafe_allow_html=True,
             )
-
+ 
     st.caption("ℹ️ This information is for educational purposes only and does not replace professional medical advice, diagnosis, or treatment.")
+ 
+Claude finished the response
