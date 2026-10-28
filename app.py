@@ -745,5 +745,3 @@ with st.container(border=True):
             )
  
     st.caption("ℹ️ This information is for educational purposes only and does not replace professional medical advice, diagnosis, or treatment.")
- 
-Claude finished the response
